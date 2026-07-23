@@ -14,7 +14,9 @@ const TYPE_LABELS: Record<CharacterType, string> = {
 
 // Shared between the Storyteller's and Player's Script panels — both just show
 // the character list with popups; only the Storyteller's wrapper adds a
-// script-selector control around this.
+// script-selector control around this. Laid out as a multi-column grid (see
+// .script-view in style.css) so a full script fits on screen without
+// scrolling on a reasonably wide viewport.
 export function renderScriptView(container: HTMLElement, scriptId: string): void {
   const script = getScript(scriptId)
   if (!script) {
@@ -35,7 +37,10 @@ export function renderScriptView(container: HTMLElement, scriptId: string): void
           character.tokenUrl
             ? el('img', { className: 'script-character-token', src: character.tokenUrl, alt: character.name })
             : el('div', { className: 'script-character-token placeholder' }),
-          el('span', { textContent: character.name }),
+          el('div', { className: 'script-character-text' }, [
+            el('span', { className: 'script-character-name', textContent: character.name }),
+            el('span', { className: 'script-character-ability', textContent: character.ability }),
+          ]),
         ])
         attachCharacterTrigger(item, character.id)
         return item

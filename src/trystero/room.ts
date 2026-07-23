@@ -15,6 +15,11 @@ import type {
   PlayerInfo,
 } from '../types'
 
+export interface UnseatedPeer {
+  peerId: string
+  name: string
+}
+
 export interface HostRoomHandle {
   selfId: string
   leave(): void
@@ -29,6 +34,13 @@ export interface HostRoomHandle {
   swapSeats(seatA: number, seatB: number): void
   setAlive(seat: number, alive: boolean): void
   setVoteToken(seat: number, voteToken: boolean): void
+
+  // Connected devices wait here, unassigned, until the Storyteller places them
+  // in a specific (vacant) seat — matching the real workflow of assigning each
+  // arriving device to whichever physical chair that person is sitting in.
+  getUnseatedPeers(): UnseatedPeer[]
+  onUnseatedChange(cb: (peers: UnseatedPeer[]) => void): void
+  assignPeerToSeat(peerId: string, seat: number): void
 
   getScriptId(): string
   setScriptId(scriptId: string): void
@@ -119,6 +131,11 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   const auditLog: AuditLogEntry[] = restored?.auditLog ?? []
   let note = restored?.note ?? ''
 
+  // Connected-but-not-yet-placed devices. Not persisted: after a Storyteller
+  // reload, every peerId here would be stale anyway (fresh Trystero session),
+  // so it's simplest to let it rebuild fresh from the `hello`s that follow.
+  const unseatedPeers = new Map<string, { name: string; reconnectToken: string }>()
+
   // Sets, not single nullable callbacks: every tab panel re-subscribes each time
   // it's activated (host-room/index.ts recreates panels on tab switch), so a
   // single-slot callback would silently drop events for whichever panel isn't
@@ -128,6 +145,16 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   const messageListeners = new Set<(msg: { peerId: string; name: string; text: string; ts: number }) => void>()
   const nightActionResponseListeners = new Set<Parameters<HostRoomHandle['onNightActionResponse']>[0]>()
   const auditLogListeners = new Set<(log: AuditLogEntry[]) => void>()
+  const unseatedListeners = new Set<(peers: UnseatedPeer[]) => void>()
+
+  function getUnseatedList(): UnseatedPeer[] {
+    return [...unseatedPeers.entries()].map(([peerId, { name }]) => ({ peerId, name }))
+  }
+
+  function notifyUnseatedChange(): void {
+    const list = getUnseatedList()
+    unseatedListeners.forEach((cb) => cb(list))
+  }
 
   function persist(): void {
     saveHostState(roomCode, { seats, scriptId, characterAssignments, reconnectTokenToSeat, auditLog, note })
@@ -145,6 +172,12 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
 
   // A player's connection is only proven open once we've received something over it,
   // so the roster is rebuilt reactively from `hello` rather than from onPeerJoin.
+  //
+  // New connections do NOT get an auto-created seat — they wait in the unseated
+  // pool until the Storyteller places them in a specific (vacant) seat, matching
+  // how a real Storyteller assigns each arriving device to the chair its owner
+  // is actually sitting in. A matching reconnectToken skips the pool entirely
+  // and goes straight back to the seat it already occupied.
   hello.onMessage = (data, { peerId }) => {
     const reclaimedSeat = reconnectTokenToSeat[data.reconnectToken]
     const seatEntry =
@@ -153,6 +186,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
     if (seatEntry) {
       seatEntry.peerId = peerId
       seatEntry.name = data.name
+      unseatedPeers.delete(peerId)
       broadcastRoster()
       persist()
       const characterId = characterAssignments[seatEntry.seat] ?? null
@@ -160,11 +194,15 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       return
     }
 
-    const seatNumber = nextSeatNumber()
-    seats.push({ seat: seatNumber, name: data.name, peerId, alive: true, voteToken: true })
-    reconnectTokenToSeat[data.reconnectToken] = seatNumber
-    broadcastRoster()
-    persist()
+    const existingUnseated = unseatedPeers.get(peerId)
+    unseatedPeers.set(peerId, { name: data.name, reconnectToken: data.reconnectToken })
+    notifyUnseatedChange()
+    if (!existingUnseated) {
+      // Not a seat change, so no broadcastRoster() — but this peer still needs
+      // to learn storytellerId (from the roster payload) before it can target
+      // any of its own sends back to us.
+      roster.send({ storytellerId: selfId, scriptId, players: [...seats] }, { target: peerId })
+    }
   }
 
   // Disconnects don't remove the seat — it stays active so a reconnect (or the
@@ -175,6 +213,9 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       seatEntry.peerId = null
       broadcastRoster()
       persist()
+    }
+    if (unseatedPeers.delete(peerId)) {
+      notifyUnseatedChange()
     }
   }
 
@@ -275,6 +316,29 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       seatEntry.voteToken = voteToken
       broadcastRoster()
       persist()
+    },
+
+    getUnseatedPeers() {
+      return getUnseatedList()
+    },
+    onUnseatedChange(cb) {
+      unseatedListeners.add(cb)
+    },
+    assignPeerToSeat(peerId, seat) {
+      const pending = unseatedPeers.get(peerId)
+      const seatEntry = seats.find((p) => p.seat === seat)
+      if (!pending || !seatEntry || seatEntry.peerId !== null) return
+
+      seatEntry.peerId = peerId
+      seatEntry.name = pending.name
+      reconnectTokenToSeat[pending.reconnectToken] = seat
+      unseatedPeers.delete(peerId)
+
+      broadcastRoster()
+      persist()
+      notifyUnseatedChange()
+      const characterId = characterAssignments[seat] ?? null
+      characterAssign.send({ characterId, ts: Date.now() }, { target: peerId })
     },
 
     getScriptId() {

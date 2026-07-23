@@ -5,7 +5,6 @@ import { renderTabs } from '../../ui/tabs'
 import { renderQrCode } from '../../ui/qr-code'
 import type { LogMessage } from '../../ui/message-log'
 import { renderGrimoirePanel } from './grimoire-panel'
-import { renderSeatsPanel } from './seats-panel'
 import { renderScriptPanel } from './script-panel'
 import { renderMessagesPanel } from './messages-panel'
 
@@ -56,7 +55,6 @@ export function renderHostRoom(container: HTMLElement): void {
   const tabsShell = container.querySelector<HTMLDivElement>('.tabs-shell')!
   renderTabs(tabsShell, [
     { id: 'grimoire', label: 'Grimoire', render: (c) => renderGrimoirePanel(c, handle) },
-    { id: 'seats', label: 'Seats', render: (c) => renderSeatsPanel(c, handle) },
     { id: 'script', label: 'Script', render: (c) => renderScriptPanel(c, handle) },
     { id: 'messages', label: 'Messages', render: (c) => renderMessagesPanel(c, handle, messageLog) },
   ])

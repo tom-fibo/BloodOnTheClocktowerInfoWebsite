@@ -88,8 +88,29 @@ they never compute their own ordering.
 connection: `PlayerInfo.peerId` is nullable. Disconnecting (`onPeerLeave`) sets a seat's
 `peerId` to `null` rather than removing it — the seat, its alive/vote-token state, and
 its (private, ST-only) character assignment all survive. This is what makes seat
-reclaim on reconnect possible (below) and is also just correct for the "Seats" panel's
+reclaim on reconnect possible (below) and is also just correct for seat management's
 own stated behavior in TODO.md ("if a player disconnects, their seat remains active").
+
+### Connection model: an unseated pool, not auto-seating
+
+A brand-new connection (no matching `reconnectToken`, no existing seat) does **not**
+get a seat created for it automatically. Instead `createHostRoom`'s closure keeps an
+in-memory `unseatedPeers: Map<peerId, {name, reconnectToken}>` — "connected, waiting to
+be placed." The Storyteller's Grimoire shows this pool inside a *vacant* seat's popup
+("Assign a connected player"), and `handle.assignPeerToSeat(peerId, seat)` is the only
+thing that moves someone out of it and into an actual seat (registering their
+`reconnectToken` against that seat number at the same time, so their *next* reload
+reclaims it directly rather than re-entering the pool). This matches the real
+Storyteller workflow of assigning each arriving device to whichever physical chair its
+owner is actually sitting in, rather than the app guessing.
+
+`unseatedPeers` is **not persisted** — unlike `seats`, it's rebuilt fresh from `hello`
+messages every time (a Storyteller reload doesn't need it to survive, since any
+still-connected-but-unplaced device will just say `hello` again once the new session
+comes up, via the same `onPeerJoin` mechanism described in "the one timing rule that
+matters" below). `onPeerLeave` also removes a departing peer from this pool if it was
+never assigned a seat, so it doesn't accumulate stale entries for people who connected
+and left before the Storyteller got to them.
 
 ### Privacy: why character assignment is never in the roster
 
@@ -209,6 +230,57 @@ who switches devices.
   doesn't leave stale state behind for next time the same room code is reused —
   but an accidental reload/crash does NOT clear it, which is the whole point.
 
+## Shared modal system + the seat popup's callback design
+
+`ui/modal.ts` is a single shared overlay slot (`openModal(content, className,
+onBackdropDismiss?)` / `closeModal()`) used by the character popup, the character
+grid picker, the Grimoire's seat popup, and the Setup modal — only one is ever open at
+a time, and opening a new one silently closes whatever was already open (e.g. the
+character picker opening on top of the seat popup). `onBackdropDismiss` fires **only**
+when the user clicks the backdrop itself, deliberately not on every `closeModal()`
+call — most `closeModal()` calls in this codebase are a modal closing itself just to
+open a *different* one, and that must not be confused with the user dismissing the
+whole interaction.
+
+This distinction matters concretely in `screens/host-room/grimoire-panel.ts` +
+`seat-modal.ts`, which is the trickiest state-management corner of the app. The
+Grimoire tracks `activeSeat: number | null` for "which seat's popup is currently
+meant to be open." `seat-modal.ts`'s `SeatModalCallbacks` has three distinct
+callbacks precisely because conflating them causes real bugs (this shipped broken
+once — the fix is worth preserving):
+
+- `onUpdate()` — seat data changed (rename, alive/vote, character via the "Change"
+  button, assigning an unseated peer). Refreshes the token circle and **reopens the
+  popup only if `activeSeat` is still non-null** — i.e. only if nothing has dismissed
+  it in the meantime. Don't remove that guard; without it, an unrelated event (like
+  `onUnseatedChange` firing because a new device connected) would reopen a popup the
+  user had already closed.
+- `onDismiss()` — the interaction is genuinely ending (✕ button, "Remove seat," "Send
+  card," or the backdrop click wired via `onBackdropDismiss`). Sets `activeSeat =
+  null`. Always paired with `closeModal()` at the call site, and for "Remove seat"/
+  "Send card," called *before* `onUpdate()` so the guard above correctly no-ops.
+- `onComposerChange()` — only the in-progress card's element list changed (an element
+  added/removed via the composer's buttons). Just reopens the popup with the same
+  `composerElements` array (passed by reference from `grimoire-panel.ts`, mutated in
+  place by `seat-modal.ts` — no separate sync step needed).
+
+The "Player" composer button is its own small state machine: clicking it closes the
+popup (via the plain `closeModal()`, not `onDismiss` — `activeSeat` deliberately stays
+set so the popup can reopen afterward), sets a local `pickingPlayer` flag, and shows a
+banner ("Tap a seat to add it as a Player…"). While that flag is set, the token
+circle's own click handler diverts to pushing a `player` element for whichever seat
+was tapped instead of opening that seat's popup, then clears the flag and reopens
+`activeSeat`'s popup. `Cancel` in the banner must also clear the flag and hide the
+banner — this was the second bug this feature shipped with; if you touch this flow,
+verify both the "successfully picked a seat" and "Cancel" paths reset picking state.
+
+`ui/character-picker.ts` is deliberately a *separate* component from the Setup modal's
+own character grid (`screens/host-room/setup-modal.ts`), even though both render a
+grid of character tokens — the interaction is different enough (single-click-and-close
+vs. toggle-many-and-keep-open, with running counts against the suggested
+distribution) that sharing one component would need an awkward mode flag. Don't
+merge them.
+
 ## File layout
 
 ```
@@ -216,7 +288,10 @@ src/
   main.ts                    # screen switcher; subscribes to the store, swaps #app content.
                               # Also reads a `?join=CODE` URL param (from a Storyteller's
                               # QR code) and routes straight to join-setup with it pre-filled.
-  style.css                   # mobile-first, light/dark aware
+  style.css                   # mobile-first; black/gold is the DEFAULT theme regardless of
+                               # system preference (matches the physical game's night-phase
+                               # aesthetic), with a light variant behind prefers-color-scheme:
+                               # light for anyone whose system explicitly asks for it
   types.ts                    # PlayerInfo, HelloPayload, RosterPayload, SecretMessagePayload,
                                # CharacterAssignPayload, NightCardPayload, NightCardElement,
                                # NightActionResponsePayload, Character, Script — every payload
@@ -248,30 +323,46 @@ src/
     dom.ts                          # el() helper (typed document.createElement + prop assign)
     tabs.ts                         # renderTabs() — shared bottom tab-bar shell; supports a
                                      # per-tab unread badge (setBadge)
+    modal.ts                         # openModal()/closeModal() — shared single-overlay-slot
+                                      # dialog primitive, see "Shared modal system" above
     roster-panel.ts                  # renderRosterPanel() — shared; host rows clickable-to-select
                                       # (only if peerId isn't null), player rows read-only;
                                       # optional showStatus renders shroud/vote-token icons
+    circular-layout.ts                # layoutInCircle() — positions a container's children
+                                       # evenly around a circle (Grimoire + Town Square seating);
+                                       # container must be square (aspect-ratio: 1)
     message-log.ts                    # appendMessage() — shared, auto-scrolling log entry
     qr-code.ts                        # renderQrCode(url) via qrcode-generator
     character-popup.ts                 # openCharacterPopup(), attachCharacterTrigger() — full
                                         # modal + desktop hover tooltip, used everywhere a
                                         # character appears
-    character-select.ts                 # characterOptionsFor(script, selectedId) — shared
-                                         # <select> builder (Grimoire's assign control, Town
-                                         # Square's prediction control)
+    character-picker.ts                 # openCharacterPicker() — single-click character grid
+                                         # popup (character assign, night-card element, Town
+                                         # Square prediction). NOT shared with Setup's own grid
+                                         # — see "Shared modal system" above for why
     script-view.ts                      # renderScriptView() — shared character-list-by-type
-                                         # renderer used by both roles' Script panels
+                                         # renderer (now shows ability text inline, multi-column
+                                         # grid) used by both roles' Script panels
   screens/
     landing.ts, host-setup.ts, join-setup.ts     # unchanged single-screen flows
     host-room/
       index.ts                          # creates the HostRoomHandle, room header (QR toggle,
                                           # leave), the shared cross-tab message log, and the
-                                          # tab shell (Grimoire/Seats/Script/Messages)
-      grimoire-panel.ts                   # token grid, per-seat detail (rename/alive/vote/
-                                           # character-assign), night card composer, night-order
-                                           # checklist, setup assistant, audit log, notes,
-                                           # Minion/Demon-info preset
-      seats-panel.ts                       # seat count / rename / reorder (swap) / remove
+                                          # tab shell (Grimoire/Script/Messages — no separate
+                                          # Seats tab, folded into the Grimoire's seat popup)
+      grimoire-panel.ts                   # seat circle (layoutInCircle), night-order sidebar
+                                           # (two-column on wide screens), audit log, notes;
+                                           # owns activeSeat/composerElements/pickingPlayer state
+                                           # and opens seat-modal.ts's content into ui/modal.ts
+      seat-modal.ts                        # buildSeatModalContent() — per-seat popup: rename/
+                                            # remove/alive/vote/character-assign, vacant-seat
+                                            # "assign a connected player" list, and the night
+                                            # card composer (quick element buttons + autofill
+                                            # preset cards + "Player"-picking flow)
+      setup-modal.ts                        # openSetupModal() — manual character-pool picker
+                                             # (toggle which characters are in play, checked
+                                             # against the suggested distribution) + "randomize
+                                             # seat assignment" for the chosen pool only
       script-panel.ts                       # script <select> (currently one option) + renderScriptView
       messages-panel.ts                      # the original ST<->Player text messaging UI
     join-room/
@@ -281,8 +372,10 @@ src/
                                           # the tab shell (Night Actions/Town Square/Script/Messages)
       night-actions-panel.ts               # own character + ability, full received-card
                                             # history, reply controls for choose-prompts
-      town-square-panel.ts                  # all seats + status, per-player prediction/notes
-                                             # (local-only scratch state), default team-count summary
+      town-square-panel.ts                  # seat circle (layoutInCircle) + status, per-player
+                                             # prediction (via character-picker.ts, not a
+                                             # dropdown) / notes (local-only scratch state),
+                                             # default team-count summary
       script-panel.ts                        # read-only renderScriptView wrapper
       messages-panel.ts                       # the original Player<->ST text messaging UI
 ```
@@ -325,6 +418,16 @@ is reserved for rare, user-initiated screen transitions only.
   the code being long enough to be effectively unguessable, not by any registration.
 - No server-side enforcement against a Player manually invoking Trystero actions from
   devtools to reach another Player directly (see above).
+- Not every composer preset card in `seat-modal.ts` has an unambiguous default to
+  autofill — "This player is," "This character selected you," "Use your Ability?,"
+  and "Make a Choice" only insert a text/prompt template, not real player/character
+  data, because the app has no way to know which specific ability is being run.
+  Revisit these against real play if the mapping feels off at the table.
+- A night card composer's "Player" button only supports picking one player at a time
+  per click (tap it again to add another) — there's no multi-select tap mode.
+- The Setup modal's "randomize seat assignment" button is disabled unless the number
+  of selected characters exactly equals the number of seats — there's no partial/
+  best-effort assignment for a mismatched count.
 
 ## Running locally / testing
 
@@ -351,8 +454,21 @@ is reserved for rare, user-initiated screen transitions only.
     all of them together, in order, as one card.
   - Send a `choosePlayer`/`chooseCharacter` prompt → Player's response reaches the
     Storyteller and is attributed to the right seat.
-  - Randomized setup assistant with Baron among the rolled Minions → outsider count
-    should be +2 / townsfolk -2 versus the base distribution for that player count.
+  - Setup modal: toggle characters including Baron → outsider count in the running
+    tally should read +2 / townsfolk -2 versus the base distribution; "randomize seat
+    assignment" should stay disabled until selected count equals seat count.
   - Switch away from the Messages tab, have another device send a message, switch
     back → the message should be there (this is the scenario the listener-Set
     refactor above exists to fix — regression-test it specifically).
+  - A brand-new device joining (no matching reconnect token) should appear in a
+    vacant seat's "Assign a connected player" list, not automatically get its own
+    seat; assigning it should move it out of that list and into the seat, and a
+    *later* reload of that same device should reclaim the seat directly.
+  - Composer "Player" button: click it, popup should close and a "tap a seat" banner
+    appear; tapping a seat should add it as an element and reopen the popup with the
+    Grimoire and Town Square circles rendering evenly regardless of seat count (try
+    2, 5, and 12 seats).
+  - Click outside a seat popup / character picker to dismiss it, then trigger an
+    unrelated update (e.g. another device connecting) → the popup must NOT reopen by
+    itself (this is the activeSeat/onDismiss bug described in "Shared modal system"
+    above — regression-test it specifically).

@@ -1,17 +1,10 @@
 import { el } from './dom'
 import { getCharacter } from '../data/characters'
-
-let overlay: HTMLElement | null = null
-
-function closePopup(): void {
-  overlay?.remove()
-  overlay = null
-}
+import { openModal, closeModal } from './modal'
 
 export function openCharacterPopup(characterId: string): void {
   const character = getCharacter(characterId)
   if (!character) return
-  closePopup()
 
   const typeLabel = `${character.alignment === 'good' ? 'Good' : 'Evil'} · ${character.type}`
 
@@ -23,7 +16,7 @@ export function openCharacterPopup(characterId: string): void {
   }
 
   const card = el('div', { className: `character-popup-card ${character.alignment}` }, [
-    el('button', { className: 'character-popup-close', textContent: '✕', onclick: closePopup }),
+    el('button', { className: 'character-popup-close', textContent: '✕', onclick: () => closeModal() }),
     character.tokenUrl
       ? el('img', { className: 'character-popup-token', src: character.tokenUrl, alt: character.name, loading: 'lazy' })
       : el('div', { className: 'character-popup-token placeholder' }),
@@ -48,14 +41,7 @@ export function openCharacterPopup(characterId: string): void {
       : []),
   ])
 
-  overlay = el('div', {
-    className: 'character-popup-overlay',
-    onclick: (event: MouseEvent) => {
-      if (event.target === overlay) closePopup()
-    },
-  })
-  overlay.append(card)
-  document.body.append(overlay)
+  openModal(card, 'character-popup-overlay')
 }
 
 // Wires a tap/click (mobile long-press has no reliable cross-browser primitive,
