@@ -1,13 +1,19 @@
 Agent: Include information about how the code works, what libraries, conventions, etc, are used, for future reference.
 Reading the MAINTENANCE file should be sufficient background information to correctly modify other files.
+Cross-reference: TODO.md tracks the feature roadmap and per-task status. When a TODO.md task's status changes (especially to implemented), update the relevant section(s) here to describe the new architecture, data model, or conventions it introduced.
 
 ## Dependency philosophy
 
 Keep dependencies minimal. Only take on a library when it's necessary or covers a
 significant portion of the project — `trystero` qualifies (it *is* the multiplayer
-layer, and reimplementing WebRTC signaling ourselves would be far riskier). A UI
-framework does not qualify at this project's current size; don't add one speculatively.
-Runtime dependencies today: `trystero` only. Dev dependencies: `vite`, `typescript`.
+layer, and reimplementing WebRTC signaling ourselves would be far riskier). `qrcode-generator`
+qualifies too, on the same logic at smaller scale: correctly implementing QR encoding
+(Reed-Solomon error correction, mask pattern selection) ourselves would be easy to get
+subtly wrong with no easy way to verify except scanning it, and the package itself has
+zero transitive dependencies. A UI framework does not qualify at this project's current
+size; don't add one speculatively.
+Runtime dependencies today: `trystero`, `qrcode-generator`. Dev dependencies: `vite`,
+`typescript`, `@types/qrcode-generator`.
 
 ## Tech stack
 
@@ -20,6 +26,11 @@ Runtime dependencies today: `trystero` only. Dev dependencies: `vite`, `typescri
 - `vite.config.ts` sets `base: './'` (relative) so the build works from any GitHub
   Pages subpath without further changes. GitHub remote creation / Pages enablement
   itself is a manual step not yet done (requires the user's own GitHub account).
+- `tsconfig.json` has `esModuleInterop: true` (added alongside `qrcode-generator`,
+  which is a CommonJS `export =` module — without it, `import qrcode from
+  'qrcode-generator'` doesn't type-check). Doesn't affect Vite's actual bundling,
+  which handles CJS/ESM interop at the esbuild/rollup level regardless of this flag;
+  it only affects `tsc`'s type-checking pass.
 
 ## Architecture: serverless P2P via Trystero
 
@@ -39,28 +50,117 @@ own for "Storyteller → one Player secretly" and "Player → Storyteller secret
 Player → Player" — there is no custom relay-through-host logic.
 
 `selfId` (imported from `trystero`) is a stable, non-mutable peer id for the life of a
-browser tab — this is the app's non-mutable per-connection id, kept separate from the
-player's mutable display name. **It regenerates on a full page reload** — a reload
-rejoins as a "new" peer with a fresh roster entry. This is a known, accepted MVP
-limitation, not a bug.
+browser tab — kept separate from the player's mutable display name and from the
+player's persistent **reconnect token** (see below). It still regenerates on a full
+page reload, but that no longer means "the same human reappears as a new roster
+row" — see "Seats, reconnect, and persistence" below for how that's now handled.
 
-### The three Trystero actions (`src/trystero/config.ts`, `src/trystero/room.ts`)
+### The six Trystero actions (`src/trystero/config.ts`, `src/trystero/room.ts`)
 
 - `hello` (Player → Storyteller, targeted): a Player announces/re-announces
-  `{name}` to a peer as soon as `room.onPeerJoin` fires for that peer.
-- `roster` (Storyteller → everyone, broadcast): `{storytellerId, players: PlayerInfo[]}`.
+  `{name, reconnectToken}` to a peer as soon as `room.onPeerJoin` fires for that peer.
+- `roster` (Storyteller → everyone, broadcast): `{storytellerId, scriptId, players:
+  PlayerInfo[]}`. `PlayerInfo` is **public seat data only** — `{seat, name, peerId,
+  alive, voteToken}` — deliberately excludes character assignment; see the privacy
+  note below.
 - `secretMessage` (both directions, always targeted): `{text, ts}`. Safe to share one
   action name for both directions because Trystero never loops a peer's own sends back
   to itself — the Storyteller's handler structurally only ever sees Player-originated
   messages, and a Player's handler only ever sees Storyteller-originated ones.
+- `characterAssign` (Storyteller → one Player, targeted): `{characterId, ts}` — the
+  *only* way a Player learns their own character. Never broadcast.
+- `nightCard` (Storyteller → one Player, targeted): `{elements: NightCardElement[],
+  ts}` — a composed night card (see "Night cards" below).
+- `nightActionResponse` (Player → Storyteller, targeted): `{forTs, chosenPeerId,
+  chosenCharacterId, ts}` — a Player's answer to a `choosePlayer`/`chooseCharacter`
+  prompt embedded in a card. `chosenPeerId`/`chosenCharacterId` are typed `string |
+  null`, not optional — Trystero's `JsonValue` constraint rejects `undefined` (see
+  the `NightCardElement` comment in `types.ts`).
 
 **Roster authority — read this before touching `room.ts`:** the Storyteller's client is
-the single source of truth for player order (a mesh has no other way to guarantee every
-peer agrees on join order). The Storyteller maintains an ordered array keyed by
-`peerId`, updated on `hello` (insert or rename in place) and pruned on `onPeerLeave`,
-then rebroadcasts the *entire* roster (plus its own `selfId` as `storytellerId`) on
-every change. Players just render whatever roster they're sent — they never compute
-their own ordering.
+the single source of truth for seat order (a mesh has no other way to guarantee every
+peer agrees on it). The Storyteller maintains an ordered `seats: PlayerInfo[]` array,
+then rebroadcasts the *entire* roster (plus its own `selfId` as `storytellerId` and the
+current `scriptId`) on every change. Players just render whatever roster they're sent —
+they never compute their own ordering.
+
+**Seats persist independently of connections.** A seat is the primary unit, not a
+connection: `PlayerInfo.peerId` is nullable. Disconnecting (`onPeerLeave`) sets a seat's
+`peerId` to `null` rather than removing it — the seat, its alive/vote-token state, and
+its (private, ST-only) character assignment all survive. This is what makes seat
+reclaim on reconnect possible (below) and is also just correct for the "Seats" panel's
+own stated behavior in TODO.md ("if a player disconnects, their seat remains active").
+
+### Privacy: why character assignment is never in the roster
+
+`PlayerInfo` (broadcast to everyone) intentionally has no `characterId` field. A
+Player's own character is private information — if it rode along in the broadcast
+`roster` payload, every Player would learn every other Player's character, which
+defeats the entire game. The Storyteller keeps `characterAssignments: Record<seat,
+characterId>` as **local-only** state (in `room.ts`'s closure, persisted only to the
+Storyteller's own `localStorage`) and pushes a character to its owner exclusively via
+the targeted `characterAssign` action. When code needs "what character is in seat N,"
+it goes through `handle.getCharacterAssignment(seat)` (Storyteller-side only) — there
+is no code path that lets this leak into a broadcast payload. Keep it that way.
+
+### Night cards: one composable payload, not one type per ability
+
+`NightCardElement` (`types.ts`) is a flat tagged interface, not a discriminated union —
+every field is present but `null` unless relevant to that element's `kind` (`text`,
+`number`, `player`, `character`, `characterChange`, `choosePlayer`, `chooseCharacter`).
+This is because `NightCardElement` needs Trystero's `[key: string]: JsonValue` index
+signature (see below), and TypeScript's `JsonValue` union rejects `undefined` — so
+optional (`field?: T`) fields don't compile, only required-but-nullable (`field: T |
+null`) ones do. Build these with `game/night-card.ts`'s `nightCardElement(kind,
+fields)` helper rather than writing the object literal by hand — it fills in the
+`null`s for you. (That helper's parameter type is deliberately a plain separate
+interface, not `Partial<Omit<NightCardElement, 'kind'>>` — `Omit`/`Pick` over a type
+that has an index signature collapses every named property's type down to the index
+signature's value type, i.e. every field becomes `JsonValue` instead of its specific
+type. Don't try to derive it from `NightCardElement` again.)
+
+A card is `{elements: NightCardElement[], ts}` — the Storyteller composes several
+elements (e.g. a `text` plus a `number`) and sends them as one `nightCard` message,
+per TODO.md's "prepare all information and then send it in one card." The Storyteller
+also appends a locally-summarized line to its private audit log (`getAuditLog()`)
+whenever a card is sent — never networked, just a `localStorage`-backed scratch record
+for "what did I tell this player" disputes.
+
+**Known limitation:** a card can contain multiple `choosePlayer`/`chooseCharacter`
+prompts, but the Player-side UI (`night-actions-panel.ts`) only wires up a single
+"Send response" button per card, driven by whichever `<select>` its `querySelector`
+finds first. Abilities needing two choices in one prompt (e.g. Fortune Teller's
+"choose 2 players") aren't fully representable yet — split them into two cards, or
+extend the response UI to loop over every prompt element and send multiple responses,
+before relying on this for a genuinely two-target ability.
+
+### Every payload interface needs the index signature (still true, now for 6 payloads)
+
+Trystero's `makeAction<T>()` requires an explicit `[key: string]: JsonValue` index
+signature on named interfaces passed as `T` (a plain object literal wouldn't need
+this, but a declared interface does) — this now applies to `HelloPayload`,
+`RosterPayload`, `SecretMessagePayload`, `CharacterAssignPayload`, `NightCardPayload`,
+and `NightActionResponsePayload` in `types.ts`.
+
+### Multiple subscribers per event, not one
+
+`HostRoomHandle`/`PlayerRoomHandle`'s `onX(cb)` methods (`onRosterChange`,
+`onPlayerMessage`, `onNightCard`, etc.) each add `cb` to a `Set`, not overwrite a
+single nullable callback slot. This matters because of how the tabbed UI works (see
+below): every panel re-subscribes each time its tab is activated, since
+`renderTabs()` tears down and recreates the active panel's DOM/closures on every
+switch. If `onX` overwrote a single slot, switching away from (say) the Messages tab
+would silently stop delivering `onPlayerMessage` events to anyone — there'd be no
+listener at all while a different tab is active, and an incoming secret message would
+just be dropped. With a `Set`, the room-level top-level subscription (registered once,
+for the life of the screen — see `host-room/index.ts` / `join-room/index.ts`) keeps
+accumulating events into a shared, screen-lifetime array regardless of which tab is
+active; each panel, on mount, replays that shared array for its initial render and
+adds its own subscription for live updates while it stays active. There's no
+explicit unsubscribe on tab-switch-away — a torn-down panel's stale listener just
+turns into a harmless no-op update to a detached DOM node, which is an acceptable
+inefficiency for a single Storyteller/Player device switching tabs a normal number of
+times per game, not a correctness issue.
 
 **The one timing rule that matters:** `hello` must never be sent as a blind broadcast
 immediately after `joinRoom()` returns — at that instant no peer connections exist yet,
@@ -70,54 +170,153 @@ sends `hello` from inside `onPeerJoin` (targeted at whichever peer just connecte
 not as a one-shot broadcast at join time. A joining Player can't yet tell which of its
 new connections is the Storyteller (the mesh connects to every existing peer, not just
 the ST), so it sends `hello` to each one — harmless, since only the Storyteller's code
-ever registers a `hello.onMessage` handler.
+ever registers a `hello.onMessage` handler. This same mechanism is what makes
+Storyteller-reload recovery work: when the ST's tab reloads, every Player sees their
+old ST-peer leave (disconnect banner) and the new ST-session join as a "new" peer,
+which fires `onPeerJoin` again and re-sends `hello` — carrying each Player's persistent
+`reconnectToken`, which the freshly-restored Storyteller state matches back to the
+right seat.
 
 **Enforcing "Players can't message Players":** this is structural, not just a hidden
-UI control. `src/screens/join-room.ts` has no code path that accepts a Player-supplied
+UI control. `src/screens/join-room/` has no code path that accepts a Player-supplied
 target peerId — `sendToStoryteller` in `src/trystero/room.ts` hardcodes
 `{target: storytellerId}`. Caveat: a technically sophisticated Player could still
 hand-invoke Trystero from their own devtools console to message another Player
 directly — there is no server in this architecture to prevent that. Accepted
 limitation for an in-person social game; not something to chase.
 
+## Seats, reconnect, and persistence
+
+Two independent `localStorage`-backed mechanisms (`src/utils/reconnect-token.ts` and
+`src/utils/host-persistence.ts`), both **same-browser only** — neither helps someone
+who switches devices.
+
+- **Player token** (`getOrCreatePlayerToken(roomCode)`): a random per-room, per-browser
+  string (not `crypto.randomUUID()` — that requires a secure context, i.e. HTTPS or
+  `localhost`, and this app is explicitly tested over plain HTTP on a LAN dev server
+  via `npm run dev -- --host`; a hand-rolled `Math.random()`-based token works
+  everywhere and doesn't need to resist a determined attacker, only survive a reload).
+  Sent in every `hello`. Lets the Storyteller recognize "this is the same seat as
+  before" across a Player's reload.
+- **Host state** (`saveHostState`/`loadHostState`/`clearHostState`, keyed by room
+  code): the Storyteller's `seats`, `scriptId`, `characterAssignments`,
+  `reconnectTokenToSeat` map, audit log, and notes, serialized to `localStorage` on
+  every mutation and restored on `createHostRoom()` init. All restored `peerId`s are
+  immediately reset to `null` — they belonged to the previous Trystero session
+  (`selfId` is fresh every reload) and are stale until each seat's occupant
+  reconnects and its `hello` is matched via `reconnectTokenToSeat`. Cleared on an
+  explicit "Leave Room" click (`clearHostState`), so intentionally ending a game
+  doesn't leave stale state behind for next time the same room code is reused —
+  but an accidental reload/crash does NOT clear it, which is the whole point.
+
 ## File layout
 
 ```
 src/
-  main.ts                 # screen switcher; subscribes to the store, swaps #app content
-  style.css                # mobile-first, light/dark aware
-  types.ts                 # PlayerInfo, HelloPayload, RosterPayload, SecretMessagePayload
-                            # (each payload needs an explicit `[key: string]: JsonValue`
-                            #  index signature — Trystero's makeAction<T>() constraint
-                            #  requires it on named interfaces, see inline comment)
+  main.ts                    # screen switcher; subscribes to the store, swaps #app content.
+                              # Also reads a `?join=CODE` URL param (from a Storyteller's
+                              # QR code) and routes straight to join-setup with it pre-filled.
+  style.css                   # mobile-first, light/dark aware
+  types.ts                    # PlayerInfo, HelloPayload, RosterPayload, SecretMessagePayload,
+                               # CharacterAssignPayload, NightCardPayload, NightCardElement,
+                               # NightActionResponsePayload, Character, Script — every payload
+                               # interface needs the `[key: string]: JsonValue` index signature
+  data/
+    characters.ts              # CHARACTERS: all 22 Trouble Brewing characters (ability,
+                                 # clarification, flavor, first/other night text + order,
+                                 # wiki/token URLs computed from name/id)
+    scripts.ts                  # SCRIPTS (currently just Trouble Brewing), DEFAULT_SCRIPT_ID
+  game/
+    night-order.ts               # deriveNightOrder(characterIdsInPlay, isFirstNight) — sorts
+                                  # by firstNightOrder/otherNightsOrder, prepends synthetic
+                                  # "Minion info"/"Demon info" steps on first night
+    setup.ts                     # suggestDistribution() (official 5-15p table),
+                                  # assignCharacters() (Baron-aware random setup), shuffle()
+    night-card.ts                 # nightCardElement() builder — see "Night cards" above
   trystero/
-    config.ts               # APP_ID (namespaces rooms on the shared public relays), ACTIONS
-    room.ts                  # createHostRoom() / joinPlayerRoom() — all P2P + privacy
-                              # logic lives only here; screens never call joinRoom/makeAction directly
-  state/store.ts             # tiny pub-sub for COARSE state only: screen/roomCode/selfName.
-                              # Deliberately does not carry roster/message data — see below.
+    config.ts                     # APP_ID (namespaces rooms on the shared public relays), ACTIONS
+    room.ts                       # createHostRoom() / joinPlayerRoom() — all P2P + privacy +
+                                    # persistence logic lives only here; screens never call
+                                    # joinRoom/makeAction/localStorage directly
+  state/store.ts                  # tiny pub-sub for COARSE state only: screen/roomCode/selfName.
+                                   # Deliberately does not carry roster/message/game data.
+  utils/
+    room-code.ts                   # generateRoomCode() (unambiguous alphabet), normalizeRoomCode()
+    reconnect-token.ts              # getOrCreatePlayerToken() — see "Seats, reconnect" above
+    host-persistence.ts             # save/load/clearHostState() — see "Seats, reconnect" above
   ui/
-    dom.ts                   # el() helper (typed document.createElement + prop assign)
-    roster-panel.ts           # renderRosterPanel() — shared; host rows clickable-to-select,
-                               # player rows read-only (selectable: false)
-    message-log.ts             # appendMessage() — shared, auto-scrolling log entry
+    dom.ts                          # el() helper (typed document.createElement + prop assign)
+    tabs.ts                         # renderTabs() — shared bottom tab-bar shell; supports a
+                                     # per-tab unread badge (setBadge)
+    roster-panel.ts                  # renderRosterPanel() — shared; host rows clickable-to-select
+                                      # (only if peerId isn't null), player rows read-only;
+                                      # optional showStatus renders shroud/vote-token icons
+    message-log.ts                    # appendMessage() — shared, auto-scrolling log entry
+    qr-code.ts                        # renderQrCode(url) via qrcode-generator
+    character-popup.ts                 # openCharacterPopup(), attachCharacterTrigger() — full
+                                        # modal + desktop hover tooltip, used everywhere a
+                                        # character appears
+    character-select.ts                 # characterOptionsFor(script, selectedId) — shared
+                                         # <select> builder (Grimoire's assign control, Town
+                                         # Square's prediction control)
+    script-view.ts                      # renderScriptView() — shared character-list-by-type
+                                         # renderer used by both roles' Script panels
   screens/
-    landing.ts, host-setup.ts, host-room.ts, join-setup.ts, join-room.ts
-  utils/room-code.ts           # generateRoomCode() (unambiguous alphabet), normalizeRoomCode()
+    landing.ts, host-setup.ts, join-setup.ts     # unchanged single-screen flows
+    host-room/
+      index.ts                          # creates the HostRoomHandle, room header (QR toggle,
+                                          # leave), the shared cross-tab message log, and the
+                                          # tab shell (Grimoire/Seats/Script/Messages)
+      grimoire-panel.ts                   # token grid, per-seat detail (rename/alive/vote/
+                                           # character-assign), night card composer, night-order
+                                           # checklist, setup assistant, audit log, notes,
+                                           # Minion/Demon-info preset
+      seats-panel.ts                       # seat count / rename / reorder (swap) / remove
+      script-panel.ts                       # script <select> (currently one option) + renderScriptView
+      messages-panel.ts                      # the original ST<->Player text messaging UI
+    join-room/
+      index.ts                          # creates the PlayerRoomHandle, room header, shared
+                                          # roster panel, shared cross-tab state (message log,
+                                          # received cards, own character, latest roster), and
+                                          # the tab shell (Night Actions/Town Square/Script/Messages)
+      night-actions-panel.ts               # own character + ability, full received-card
+                                            # history, reply controls for choose-prompts
+      town-square-panel.ts                  # all seats + status, per-player prediction/notes
+                                             # (local-only scratch state), default team-count summary
+      script-panel.ts                        # read-only renderScriptView wrapper
+      messages-panel.ts                       # the original Player<->ST text messaging UI
 ```
 
-**Why the room screens don't route through the global store:** `host-room.ts` and
-`join-room.ts` wire the Trystero handle's callbacks directly to their own local DOM
-subtrees (roster panel, message log, compose box) instead of pushing every
-roster/message update through `state/store.ts`. Roster and message events arrive
+**Why the room screens don't route through the global store:** `host-room/` and
+`join-room/` wire the Trystero handle's callbacks directly to their own local DOM
+subtrees (roster panel, message log, compose box, tab panels) instead of pushing every
+roster/message/night-card update through `state/store.ts`. These events arrive
 asynchronously and often — if they triggered a full-screen re-render, they'd wipe out
 text a user is mid-typing the moment someone else joins, leaves, or messages. The store
 is reserved for rare, user-initiated screen transitions only.
 
 ## Known accepted limitations
 
-- Page reload regenerates `selfId` → the same human reappears as a new roster row.
-  Not solved; documented.
+- Reload used to always mean "the same human reappears as a new roster row" — that's
+  now mitigated by the reconnect-token/seat-reclaim mechanism above, but only within
+  the same browser. A Player switching to a different device/browser still can't
+  reclaim their old seat; they'll appear as a new one, same as before.
+- Storyteller-side reload/crash recovery is same-browser only (plain `localStorage`,
+  nothing synced elsewhere) — a Storyteller switching devices mid-game loses all
+  seat/character/audit-log state, same as if this feature didn't exist.
+- A night card with more than one `choosePlayer`/`chooseCharacter` prompt only gets one
+  response wired up on the Player's side (see "Night cards" above).
+- Town Square predictions and notes are pure in-memory scratch state on the Player's
+  own device — not persisted across reload, not sent anywhere. Losing them on
+  accidental reload is an accepted gap (see TODO.md's deferred list).
+- Character token images hotlink `release.botc.app`'s own asset URLs (a pattern the
+  project's own TODO.md suggested) — this is a third-party host we don't control and
+  could change its URL scheme without notice; if tokens stop rendering, that's the
+  first thing to check.
+- Ability/flavor text for the 22 Trouble Brewing characters in `data/characters.ts`
+  was written from memory of the official script, not transcribed from a source file —
+  spot-check exact wording against a physical almanac/character sheet before trusting
+  it verbatim at the table.
 - The room code doubles as both the Trystero `roomId` and the `password` (for signaling
   encryption). Both create and join paths normalize it (trim + uppercase) since a
   mismatch silently produces two disjoint rooms with no visible error. Default codes
@@ -135,9 +334,25 @@ is reserved for rare, user-initiated screen transitions only.
   exercise genuine (if fast) network handshakes — but for a real validation, test
   across actual separate devices, including at least one on cellular data rather than
   the same Wi-Fi, to confirm it isn't accidentally relying on same-subnet behavior.
-- Verification checklist (see the plan history for the full scenario list): sequential
-  and simultaneous joins produce a correctly-ordered roster on every screen; renames
-  update in place; a Player leaving prunes everyone's roster; a Storyteller→Player
-  secret message is invisible to other Players and vice versa; closing the
-  Storyteller's tab shows Players a disconnect banner; refreshing a Player's tab
-  produces a new roster row (expected, not a bug).
+- Verification checklist (original comms MVP, still applies): sequential and
+  simultaneous joins produce a correctly-ordered roster on every screen; renames
+  update in place; a Player leaving keeps their seat (now shown as disconnected,
+  not removed); a Storyteller→Player secret message is invisible to other Players
+  and vice versa; closing the Storyteller's tab shows Players a disconnect banner.
+- Additional checklist for this pass's features (none of this has been run yet —
+  everything below is "implemented," not "tested & functional" in TODO.md's terms):
+  - Reload a Player's tab mid-game → they should reclaim their same seat (name,
+    alive/vote-token state, and character all intact), not appear as a duplicate.
+  - Reload/crash the Storyteller's tab mid-game → seats, character assignments,
+    script, audit log, and notes should all still be there once Players reconnect.
+  - Scan the Storyteller's QR code from a phone camera → lands on join-setup with
+    the room code pre-filled.
+  - Send a night card combining several element kinds in one message → Player sees
+    all of them together, in order, as one card.
+  - Send a `choosePlayer`/`chooseCharacter` prompt → Player's response reaches the
+    Storyteller and is attributed to the right seat.
+  - Randomized setup assistant with Baron among the rolled Minions → outsider count
+    should be +2 / townsfolk -2 versus the base distribution for that player count.
+  - Switch away from the Messages tab, have another device send a message, switch
+    back → the message should be there (this is the scenario the listener-Set
+    refactor above exists to fix — regression-test it specifically).

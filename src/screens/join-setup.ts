@@ -1,10 +1,10 @@
 import { el } from '../ui/dom'
-import { setState } from '../state/store'
+import { getState, setState } from '../state/store'
 import { normalizeRoomCode } from '../utils/room-code'
 
 export function renderJoinSetup(container: HTMLElement): void {
   const nameInput = el('input', { className: 'name-input', placeholder: 'Your display name', maxLength: 20 })
-  const codeInput = el('input', { className: 'room-code-input', placeholder: 'Room code' })
+  const codeInput = el('input', { className: 'room-code-input', placeholder: 'Room code', value: getState().roomCode })
 
   function join(): void {
     const name = nameInput.value.trim()
