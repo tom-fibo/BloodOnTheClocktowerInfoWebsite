@@ -2,17 +2,33 @@ import { el } from '../../ui/dom'
 import type { PlayerRoomHandle } from '../../trystero/room'
 import { getCharacter } from '../../data/characters'
 import { attachCharacterTrigger, openCharacterPopup } from '../../ui/character-popup'
+import { nightCardElement } from '../../game/night-card'
 import type { NightCardElement, PlayerInfo } from '../../types'
 
-export interface ReceivedCard {
-  elements: NightCardElement[]
+// Messages and night cards are the same feed from the Player's point of view —
+// a plain text message (either direction) is just a card with one `text`
+// element, so both render through the same `renderElement` path below.
+export interface FeedEntry {
   ts: number
+  self: boolean
+  elements: NightCardElement[]
 }
 
 export interface NightActionsState {
   myCharacterId: string | null
-  receivedCards: ReceivedCard[]
+  feed: FeedEntry[]
   latestRoster: PlayerInfo[]
+}
+
+function characterChip(className: string, character: ReturnType<typeof getCharacter>, label: string): HTMLElement {
+  const item = el('button', { className }, [
+    character?.tokenUrl
+      ? el('img', { className: 'character-chip-token', src: character.tokenUrl, alt: character.name })
+      : el('div', { className: 'character-chip-token placeholder' }),
+    el('span', { textContent: label }),
+  ])
+  if (character) attachCharacterTrigger(item, character.id)
+  return item
 }
 
 function renderElement(element: NightCardElement, roster: PlayerInfo[]): HTMLElement {
@@ -25,15 +41,11 @@ function renderElement(element: NightCardElement, roster: PlayerInfo[]): HTMLEle
       return el('p', { className: 'night-card-element', textContent: `Player: ${element.name ?? 'Unknown'}` })
     case 'character': {
       const character = getCharacter(element.characterId ?? '')
-      const item = el('button', { className: 'night-card-element character-chip', textContent: character?.name ?? element.characterId ?? '?' })
-      if (character) attachCharacterTrigger(item, character.id)
-      return item
+      return characterChip('night-card-element character-chip', character, character?.name ?? element.characterId ?? '?')
     }
     case 'characterChange': {
       const character = getCharacter(element.characterId ?? '')
-      const item = el('button', { className: 'night-card-element character-chip change', textContent: `You are now: ${character?.name ?? element.characterId}` })
-      if (character) attachCharacterTrigger(item, character.id)
-      return item
+      return characterChip('night-card-element character-chip change', character, `You are now: ${character?.name ?? element.characterId}`)
     }
     case 'choosePlayer':
       return renderChoosePlayer(element, roster)
@@ -68,7 +80,8 @@ function renderChooseCharacter(element: NightCardElement): HTMLElement {
 
 export function renderNightActionsPanel(container: HTMLElement, handle: PlayerRoomHandle, state: NightActionsState): void {
   const characterSection = el('div', { className: 'my-character-section' })
-  const cardsList = el('div', { className: 'received-cards-list' })
+  const feedList = el('div', { className: 'received-cards-list' })
+  const customInput = el('input', { className: 'composer-input', placeholder: 'Custom text…' })
 
   function refreshCharacter(): void {
     const character = state.myCharacterId ? getCharacter(state.myCharacterId) : undefined
@@ -94,18 +107,18 @@ export function renderNightActionsPanel(container: HTMLElement, handle: PlayerRo
     )
   }
 
-  function refreshCards(): void {
-    const ordered = [...state.receivedCards].reverse()
-    cardsList.replaceChildren(
+  function refreshFeed(): void {
+    const ordered = [...state.feed].reverse()
+    feedList.replaceChildren(
       ...(ordered.length
-        ? ordered.map((card) =>
-            el('div', { className: 'night-card' }, [
+        ? ordered.map((entry) =>
+            el('div', { className: `night-card${entry.self ? ' self' : ''}` }, [
               el('p', {
                 className: 'night-card-time',
-                textContent: new Date(card.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                textContent: `${entry.self ? 'You · ' : ''}${new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
               }),
-              ...card.elements.map((element) => renderElement(element, state.latestRoster)),
-              ...(card.elements.some((e) => e.kind === 'choosePlayer' || e.kind === 'chooseCharacter')
+              ...entry.elements.map((element) => renderElement(element, state.latestRoster)),
+              ...(!entry.self && entry.elements.some((e) => e.kind === 'choosePlayer' || e.kind === 'chooseCharacter')
                 ? [
                     el('button', {
                       className: 'primary',
@@ -114,11 +127,11 @@ export function renderNightActionsPanel(container: HTMLElement, handle: PlayerRo
                         const wrapper = (event.currentTarget as HTMLElement).parentElement
                         const select = wrapper?.querySelector('select')
                         if (!select) return
-                        const chooseCharacter = card.elements.find((e) => e.kind === 'chooseCharacter')
+                        const chooseCharacter = entry.elements.find((e) => e.kind === 'chooseCharacter')
                         if (chooseCharacter) {
-                          handle.respondToNightCard(card.ts, { chosenCharacterId: select.value })
+                          handle.respondToNightCard(entry.ts, { chosenCharacterId: select.value })
                         } else {
-                          handle.respondToNightCard(card.ts, { chosenPeerId: select.value })
+                          handle.respondToNightCard(entry.ts, { chosenPeerId: select.value })
                         }
                       },
                     }),
@@ -126,23 +139,62 @@ export function renderNightActionsPanel(container: HTMLElement, handle: PlayerRo
                 : []),
             ]),
           )
-        : [el('p', { className: 'roster-empty', textContent: 'No night cards yet.' })]),
+        : [el('p', { className: 'roster-empty', textContent: 'Nothing yet.' })]),
     )
   }
+
+  function send(elements: NightCardElement[]): void {
+    const text = elements.length === 1 && elements[0].kind === 'text' ? elements[0].text ?? '' : ''
+    if (text) handle.sendToStoryteller(text)
+    state.feed.push({ ts: Date.now(), self: true, elements })
+    refreshFeed()
+  }
+
+  const composer = el('div', { className: 'night-actions-composer' }, [
+    el('div', { className: 'element-quick-grid' }, [
+      el('button', {
+        className: 'element-quick-button',
+        textContent: 'Got it',
+        onclick: () => send([nightCardElement('text', { text: 'Got it' })]),
+      }),
+    ]),
+    el('div', { className: 'composer-row' }, [
+      customInput,
+      el('button', {
+        className: 'primary',
+        textContent: 'Send',
+        onclick: () => {
+          const text = customInput.value.trim()
+          if (!text) return
+          send([nightCardElement('text', { text })])
+          customInput.value = ''
+        },
+      }),
+    ]),
+  ])
+  customInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      const text = customInput.value.trim()
+      if (!text) return
+      send([nightCardElement('text', { text })])
+      customInput.value = ''
+    }
+  })
 
   container.replaceChildren(
     el('div', { className: 'night-actions-panel' }, [
       el('h2', { textContent: 'Your character' }),
       characterSection,
       el('h2', { textContent: 'Night cards' }),
-      cardsList,
+      composer,
+      feedList,
     ]),
   )
 
   refreshCharacter()
-  refreshCards()
+  refreshFeed()
 
   handle.onCharacterAssign(() => refreshCharacter())
-  handle.onNightCard(() => refreshCards())
-  handle.onRosterChange(() => refreshCards())
+  handle.onNightCard(() => refreshFeed())
+  handle.onRosterChange(() => refreshFeed())
 }

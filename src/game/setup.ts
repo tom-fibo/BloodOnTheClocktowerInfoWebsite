@@ -30,6 +30,14 @@ export function suggestDistribution(playerCount: number): Distribution {
   return DISTRIBUTION_TABLE[clamped]
 }
 
+export const DISTRIBUTION_PLAYER_COUNTS = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const
+
+// The whole 5-15 table, for display (e.g. the Script view's player-count chart) —
+// distinct from suggestDistribution(), which is for a single specific count.
+export function getDistributionTable(): (Distribution & { players: number })[] {
+  return DISTRIBUTION_PLAYER_COUNTS.map((players) => ({ players, ...DISTRIBUTION_TABLE[players] }))
+}
+
 export function shuffle<T>(items: T[]): T[] {
   const copy = [...items]
   for (let i = copy.length - 1; i > 0; i--) {

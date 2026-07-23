@@ -39,7 +39,15 @@
   box-sizing: border-box;
 }
 
+/* The app is a fixed-height shell (never taller than the viewport) so that
+   only designated inner regions scroll — the tab bar and room header must
+   never be pushed off-screen by a page-level scroll. Content that doesn't fit
+   is expected to be handled per-screen (compact layouts, CSS columns, etc.);
+   where it genuinely can't all fit, the innermost scrollable region takes the
+   overflow, never the whole page. */
+html,
 body {
+  height: 100%;
   margin: 0;
 }
 
@@ -100,18 +108,23 @@ button.leave-button {
 }
 
 #app {
-  max-width: 720px;
+  /* Wide, not 720px — a Storyteller on a desktop monitor should get to use it;
+     mobile Player viewports are narrow anyway so this cap rarely matters there. */
+  max-width: 1400px;
   margin: 0 auto;
-  min-height: 100svh;
-  padding: 1.25rem;
+  height: 100svh;
+  padding: 1rem 1.25rem;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .screen {
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .subtitle {
@@ -150,29 +163,6 @@ button.leave-button {
   margin: 0;
 }
 
-.room-body {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  margin-top: 1rem;
-  flex: 1;
-  min-height: 0;
-}
-
-@media (min-width: 640px) {
-  .room-body {
-    flex-direction: row;
-  }
-
-  .roster-column {
-    flex: 0 0 40%;
-  }
-
-  .messaging-column {
-    flex: 1;
-  }
-}
-
 .roster-list {
   list-style: none;
   margin: 0;
@@ -201,54 +191,6 @@ button.leave-button {
   color: var(--text-muted);
   font-style: italic;
   list-style: none;
-}
-
-.messaging-column {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  min-height: 0;
-}
-
-.selected-label {
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.message-log {
-  flex: 1;
-  min-height: 160px;
-  max-height: 40vh;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.6rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.message {
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
-  background: var(--bg-alt);
-}
-
-.message.self {
-  background: color-mix(in srgb, var(--accent) 15%, var(--bg-alt));
-}
-
-.message-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.message-text {
-  margin: 0.2rem 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .disconnect-banner {
@@ -410,13 +352,17 @@ button.danger {
 
 /* Seats arranged in a circle, matching the physical Town Square — see
    ui/circular-layout.ts, which positions each .seat-token child absolutely
-   within this square container. */
+   within this square container. Sized by the smaller of the two available
+   dimensions (min() of a width-based and a height-based cap) so it reads as
+   one large circle filling whatever space it has — including a wide
+   Storyteller monitor — rather than a small fixed thumbnail. */
 .seat-circle {
   position: relative;
   width: 100%;
-  max-width: 460px;
+  max-width: min(100%, 78vh, 760px);
   aspect-ratio: 1 / 1;
   margin: 0.5rem auto 1.5rem;
+  flex-shrink: 0;
 }
 
 .seat-token {
@@ -693,6 +639,18 @@ button.danger {
   margin-top: 0.5rem;
 }
 
+/* Per-seat message log (folded into the seat popup — see seat-modal.ts) */
+
+.seat-messages {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.seat-message-log {
+  max-height: 20vh;
+}
+
 /* Composer: preset autofill cards + single-click element buttons */
 
 .preset-card-grid {
@@ -821,20 +779,39 @@ button.danger {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.script-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Newspaper-style CSS columns across the WHOLE script (not per-group) so a
+   group's tail and the next group's head can share a column — closer to the
+   official script PDF's compact, no-scroll layout than a fixed grid is. */
+.script-columns {
+  columns: 280px;
+  column-gap: 2rem;
 }
 
 .script-group {
+  break-inside: avoid-column;
   margin-top: 1rem;
 }
 
-/* Multi-column so the whole script fits without scrolling on a reasonably
-   wide screen, per the ability text now shown inline under each name. */
+.script-group h3 {
+  break-after: avoid-column;
+}
+
 .script-character-list {
   list-style: none;
   margin: 0.4rem 0 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 0.4rem;
 }
 
@@ -847,6 +824,7 @@ button.danger {
   border-radius: 6px;
   cursor: pointer;
   position: relative;
+  break-inside: avoid-column;
 }
 
 .script-character-token {
@@ -868,6 +846,30 @@ button.danger {
 }
 
 .script-character-name {
+  font-weight: 600;
+}
+
+.distribution-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  align-self: center;
+}
+
+.distribution-table th,
+.distribution-table td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: center;
+}
+
+.distribution-table thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.distribution-table tbody th {
+  text-align: left;
+  color: var(--text-muted);
   font-weight: 600;
 }
 
@@ -993,6 +995,13 @@ button.danger {
   background: var(--bg-alt);
 }
 
+.night-actions-composer {
+  margin: 0.5rem 0 1rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
 .received-cards-list {
   display: flex;
   flex-direction: column;
@@ -1004,6 +1013,10 @@ button.danger {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.6rem 0.75rem;
+}
+
+.night-card.self {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .night-card-time {
@@ -1022,6 +1035,9 @@ button.danger {
 }
 
 .character-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   background: var(--bg-alt);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1030,6 +1046,18 @@ button.danger {
 
 .character-chip.change {
   border-color: var(--accent);
+}
+
+.character-chip-token {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.character-chip-token.placeholder {
+  background: var(--border);
 }
 
 .choose-prompt {

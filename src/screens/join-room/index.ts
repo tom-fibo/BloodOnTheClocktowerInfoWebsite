@@ -4,12 +4,11 @@ import { joinPlayerRoom } from '../../trystero/room'
 import { renderRosterPanel } from '../../ui/roster-panel'
 import { renderTabs } from '../../ui/tabs'
 import { DEFAULT_SCRIPT_ID } from '../../data/scripts'
-import type { LogMessage } from '../../ui/message-log'
+import { nightCardElement } from '../../game/night-card'
 import type { PlayerInfo } from '../../types'
-import { renderNightActionsPanel, type ReceivedCard } from './night-actions-panel'
+import { renderNightActionsPanel, type FeedEntry } from './night-actions-panel'
 import { renderTownSquarePanel } from './town-square-panel'
 import { renderScriptPanel } from './script-panel'
-import { renderMessagesPanel } from './messages-panel'
 
 export function renderJoinRoom(container: HTMLElement): void {
   const { roomCode, selfName } = getState()
@@ -19,9 +18,8 @@ export function renderJoinRoom(container: HTMLElement): void {
   // per-tab panels, which are torn down and recreated on every tab switch) —
   // see trystero/room.ts's listener-Set comment for why a plain single-slot
   // callback can't be trusted to carry state between panel mounts.
-  const messageLog: LogMessage[] = []
-  const receivedCards: ReceivedCard[] = []
-  const nightActionsState = { myCharacterId: null as string | null, receivedCards, latestRoster: [] as PlayerInfo[] }
+  const feed: FeedEntry[] = []
+  const nightActionsState = { myCharacterId: null as string | null, feed, latestRoster: [] as PlayerInfo[] }
   const townSquareState = { latestRoster: [] as PlayerInfo[], scriptId: DEFAULT_SCRIPT_ID }
 
   const rosterContainer = el('div', { className: 'roster-panel' })
@@ -53,23 +51,25 @@ export function renderJoinRoom(container: HTMLElement): void {
   const tabsShell = container.querySelector<HTMLDivElement>('.tabs-shell')!
   const tabsHandle = renderTabs(tabsShell, [
     { id: 'night-actions', label: 'Night Actions', render: (c) => renderNightActionsPanel(c, handle, nightActionsState) },
-    { id: 'town-square', label: 'Town Square', render: (c) => renderTownSquarePanel(c, townSquareState) },
-    { id: 'script', label: 'Script', render: (c) => renderScriptPanel(c, townSquareState.scriptId) },
-    { id: 'messages', label: 'Messages', render: (c) => renderMessagesPanel(c, handle, messageLog) },
+    { id: 'town-square', label: 'Town Square', render: (c) => renderTownSquarePanel(c, handle, townSquareState) },
+    { id: 'script', label: 'Script', render: (c) => renderScriptPanel(c, handle, townSquareState.scriptId) },
   ])
 
   handle.onRosterChange((players, _storytellerId, scriptId) => {
     nightActionsState.latestRoster = players
     townSquareState.latestRoster = players
     townSquareState.scriptId = scriptId
-    renderRosterPanel(rosterContainer, players, { selectable: false, showStatus: true })
+    renderRosterPanel(rosterContainer, players, { showStatus: true })
     banner.classList.add('hidden')
   })
 
   handle.onStorytellerLeave(() => banner.classList.remove('hidden'))
 
+  // Messages and night cards are the same feed (see night-actions-panel.ts) —
+  // a plain Storyteller message is just a card with one text element.
   handle.onStorytellerMessage((msg) => {
-    messageLog.push({ label: 'Storyteller', text: msg.text, ts: msg.ts })
+    feed.push({ ts: msg.ts, self: false, elements: [nightCardElement('text', { text: msg.text })] })
+    tabsHandle.setBadge('night-actions', true)
   })
 
   handle.onCharacterAssign((characterId) => {
@@ -77,7 +77,7 @@ export function renderJoinRoom(container: HTMLElement): void {
   })
 
   handle.onNightCard((card) => {
-    receivedCards.push(card)
+    feed.push({ ts: card.ts, self: false, elements: card.elements })
     tabsHandle.setBadge('night-actions', true)
   })
 

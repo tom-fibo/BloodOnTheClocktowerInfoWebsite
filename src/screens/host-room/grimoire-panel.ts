@@ -6,11 +6,15 @@ import { openModal, closeModal } from '../../ui/modal'
 import { layoutInCircle } from '../../ui/circular-layout'
 import { deriveNightOrder } from '../../game/night-order'
 import { nightCardElement } from '../../game/night-card'
-import { buildSeatModalContent } from './seat-modal'
+import { buildSeatModalContent, type SeatMessage } from './seat-modal'
 import { openSetupModal } from './setup-modal'
 import type { NightCardElement, PlayerInfo } from '../../types'
 
-export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHandle): void {
+export function renderGrimoirePanel(
+  container: HTMLElement,
+  handle: HostRoomHandle,
+  messagesBySeat: Map<number, SeatMessage[]>,
+): void {
   let activeSeat: number | null = null
   let composerElements: NightCardElement[] = []
   let pickingPlayer = false
@@ -65,7 +69,9 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
       activeSeat = null
       return
     }
-    const content = buildSeatModalContent(handle, seat, composerElements, {
+    const seatMessages = messagesBySeat.get(seatNumber) ?? []
+    messagesBySeat.set(seatNumber, seatMessages)
+    const content = buildSeatModalContent(handle, seat, composerElements, seatMessages, {
       onUpdate: () => {
         refreshTokenGrid()
         refreshAuditLog()
@@ -231,6 +237,13 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     if (activeSeat !== null) openSeatFor(activeSeat, false)
   })
   handle.onAuditLogChange(refreshAuditLog)
+  // The map itself is populated by a persistent subscription up in
+  // host-room/index.ts (so messages aren't lost while a different tab is
+  // active) — this one just refreshes the modal if it's open for that seat.
+  handle.onPlayerMessage((msg) => {
+    const seatEntry = seats().find((s) => s.peerId === msg.peerId)
+    if (seatEntry && activeSeat === seatEntry.seat) openSeatFor(activeSeat, false)
+  })
 
   refreshPinnedNote()
   refreshTokenGrid()

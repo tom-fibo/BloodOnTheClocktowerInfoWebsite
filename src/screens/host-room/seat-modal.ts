@@ -26,6 +26,16 @@ export interface SeatModalCallbacks {
   onDismiss: () => void
 }
 
+// Messages and night cards are the same concept from the Storyteller's side
+// too — this is a simple two-way text log scoped to one seat, replacing the
+// old standalone "Messages" tab. Sent night cards themselves are tracked
+// separately in the private audit log (grimoire-panel.ts), not duplicated here.
+export interface SeatMessage {
+  ts: number
+  self: boolean
+  text: string
+}
+
 function seatsWithCharacters(handle: HostRoomHandle): { seat: PlayerInfo; characterId: string }[] {
   return handle
     .getSeats()
@@ -219,10 +229,51 @@ function buildComposer(
   ])
 }
 
+function buildMessageLog(
+  handle: HostRoomHandle,
+  seat: PlayerInfo,
+  messageLog: SeatMessage[],
+  callbacks: SeatModalCallbacks,
+): HTMLElement {
+  const logList = el(
+    'ul',
+    { className: 'audit-log-list seat-message-log' },
+    messageLog.length
+      ? messageLog.map((msg) =>
+          el('li', {}, [
+            el('span', { className: 'audit-log-time', textContent: new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }),
+            el('span', { className: 'audit-log-seat', textContent: msg.self ? 'You' : seat.name }),
+            el('span', { className: 'audit-log-summary', textContent: msg.text }),
+          ]),
+        )
+      : [el('li', { className: 'roster-empty', textContent: 'No messages yet.' })],
+  )
+
+  const input = el('input', { className: 'composer-input', placeholder: 'Quick message…' })
+  function send(): void {
+    const text = input.value.trim()
+    if (!text || !seat.peerId) return
+    handle.sendToPlayer(seat.peerId, text)
+    messageLog.push({ ts: Date.now(), self: true, text })
+    input.value = ''
+    callbacks.onComposerChange()
+  }
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') send()
+  })
+
+  return el('div', { className: 'seat-messages' }, [
+    el('h3', { textContent: 'Messages' }),
+    logList,
+    el('div', { className: 'composer-row' }, [input, el('button', { textContent: 'Send', onclick: send })]),
+  ])
+}
+
 export function buildSeatModalContent(
   handle: HostRoomHandle,
   seat: PlayerInfo,
   composerElements: NightCardElement[],
+  messageLog: SeatMessage[],
   callbacks: SeatModalCallbacks,
 ): HTMLElement {
   const characterId = handle.getCharacterAssignment(seat.seat)
@@ -324,6 +375,7 @@ export function buildSeatModalContent(
       el('label', {}, [voteCheckbox, ' Has vote token']),
     ]),
     characterRow,
+    seat.peerId !== null ? buildMessageLog(handle, seat, messageLog, callbacks) : el('div'),
     seat.peerId !== null ? buildComposer(handle, seat, composerElements, callbacks) : el('div'),
   ])
 }

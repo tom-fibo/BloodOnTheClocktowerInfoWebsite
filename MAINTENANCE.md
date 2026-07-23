@@ -325,68 +325,110 @@ src/
                                      # per-tab unread badge (setBadge)
     modal.ts                         # openModal()/closeModal() — shared single-overlay-slot
                                       # dialog primitive, see "Shared modal system" above
-    roster-panel.ts                  # renderRosterPanel() — shared; host rows clickable-to-select
-                                      # (only if peerId isn't null), player rows read-only;
+    roster-panel.ts                  # renderRosterPanel() — read-only (Player's "Players in
+                                      # this room" list only; the ST no longer has a selectable
+                                      # variant — clicking a seat in the Grimoire replaced it);
                                       # optional showStatus renders shroud/vote-token icons
     circular-layout.ts                # layoutInCircle() — positions a container's children
                                        # evenly around a circle (Grimoire + Town Square seating);
                                        # container must be square (aspect-ratio: 1)
-    message-log.ts                    # appendMessage() — shared, auto-scrolling log entry
     qr-code.ts                        # renderQrCode(url) via qrcode-generator
     character-popup.ts                 # openCharacterPopup(), attachCharacterTrigger() — full
                                         # modal + desktop hover tooltip, used everywhere a
-                                        # character appears
+                                        # character appears; also exports the small
+                                        # .character-chip-token icon markup reused by
+                                        # night-actions-panel.ts's rendered card elements
     character-picker.ts                 # openCharacterPicker() — single-click character grid
                                          # popup (character assign, night-card element, Town
                                          # Square prediction). NOT shared with Setup's own grid
                                          # — see "Shared modal system" above for why
     script-view.ts                      # renderScriptView() — shared character-list-by-type
-                                         # renderer (now shows ability text inline, multi-column
-                                         # grid) used by both roles' Script panels
+                                         # renderer (ability text inline, CSS-column layout, plus
+                                         # the 5-15+ player distribution table) used by both
+                                         # roles' Script panels
   screens/
     landing.ts, host-setup.ts, join-setup.ts     # unchanged single-screen flows
     host-room/
       index.ts                          # creates the HostRoomHandle, room header (QR toggle,
-                                          # leave), the shared cross-tab message log, and the
-                                          # tab shell (Grimoire/Script/Messages — no separate
-                                          # Seats tab, folded into the Grimoire's seat popup)
+                                          # leave), the persistent per-seat message-log
+                                          # subscription (see "Messages and night cards are
+                                          # unified" below), and the tab shell (Grimoire/Script —
+                                          # no separate Seats or Messages tab; both folded into
+                                          # the Grimoire's seat popup)
       grimoire-panel.ts                   # seat circle (layoutInCircle), night-order sidebar
                                            # (two-column on wide screens), audit log, notes;
                                            # owns activeSeat/composerElements/pickingPlayer state
                                            # and opens seat-modal.ts's content into ui/modal.ts
       seat-modal.ts                        # buildSeatModalContent() — per-seat popup: rename/
                                             # remove/alive/vote/character-assign, vacant-seat
-                                            # "assign a connected player" list, and the night
-                                            # card composer (quick element buttons + autofill
-                                            # preset cards + "Player"-picking flow)
+                                            # "assign a connected player" list, a per-seat message
+                                            # log + quick-send box, and the night card composer
+                                            # (quick element buttons + autofill preset cards +
+                                            # "Player"-picking flow)
       setup-modal.ts                        # openSetupModal() — manual character-pool picker
                                              # (toggle which characters are in play, checked
                                              # against the suggested distribution) + "randomize
                                              # seat assignment" for the chosen pool only
       script-panel.ts                       # script <select> (currently one option) + renderScriptView
-      messages-panel.ts                      # the original ST<->Player text messaging UI
     join-room/
       index.ts                          # creates the PlayerRoomHandle, room header, shared
-                                          # roster panel, shared cross-tab state (message log,
-                                          # received cards, own character, latest roster), and
-                                          # the tab shell (Night Actions/Town Square/Script/Messages)
-      night-actions-panel.ts               # own character + ability, full received-card
-                                            # history, reply controls for choose-prompts
-      town-square-panel.ts                  # seat circle (layoutInCircle) + status, per-player
-                                             # prediction (via character-picker.ts, not a
-                                             # dropdown) / notes (local-only scratch state),
-                                             # default team-count summary
-      script-panel.ts                        # read-only renderScriptView wrapper
-      messages-panel.ts                       # the original Player<->ST text messaging UI
+                                          # roster panel, shared cross-tab state (the unified
+                                          # message/card feed, own character, latest roster), and
+                                          # the tab shell (Night Actions/Town Square/Script — no
+                                          # separate Messages tab, folded into Night Actions)
+      night-actions-panel.ts               # own character + ability, the unified feed (see
+                                            # "Messages and night cards are unified" below), a
+                                            # "Got it" + custom-text send composer, and reply
+                                            # controls for choose-prompts
+      town-square-panel.ts                  # seat circle (layoutInCircle); tapping a seat opens
+                                             # a popup (ui/modal.ts) with status, a prediction
+                                             # picker (via character-picker.ts), and notes —
+                                             # mirrors the Grimoire's "click a seat" pattern.
+                                             # Subscribes to onRosterChange itself (live-updates
+                                             # while mounted, not just at mount time)
+      script-panel.ts                        # read-only renderScriptView wrapper; also
+                                              # subscribes to onRosterChange in case the
+                                              # Storyteller changes the script mid-game
 ```
 
 **Why the room screens don't route through the global store:** `host-room/` and
 `join-room/` wire the Trystero handle's callbacks directly to their own local DOM
-subtrees (roster panel, message log, compose box, tab panels) instead of pushing every
+subtrees (roster panel, seat popups, tab panels) instead of pushing every
 roster/message/night-card update through `state/store.ts`. These events arrive
 asynchronously and often — if they triggered a full-screen re-render, they'd wipe out
 text a user is mid-typing the moment someone else joins, leaves, or messages. The store
 is reserved for rare, user-initiated screen transitions only.
+
+## Messages and night cards are unified (no separate "Messages" tab)
+
+A plain text message and a structured night card are now the same concept, displayed
+through the same feed on both sides — there is no standalone "Messages" tab anywhere
+in the app anymore (the original `screens/*/messages-panel.ts` and `ui/message-log.ts`
+are deleted).
+
+- **Player side** (`night-actions-panel.ts`): `FeedEntry = {ts, self, elements:
+  NightCardElement[]}`. A plain message (either direction) is represented as a card
+  with exactly one `text` element — built via the same `nightCardElement()` helper as
+  everything else, so `renderElement()` renders both received night cards and plain
+  messages through identical code. The "Got it" button and custom-text box just call
+  `send([nightCardElement('text', {text})])`, which both calls `handle.
+  sendToStoryteller()` (still the plain `secretMessage` action over the wire — the
+  unification is a *display-layer* concept, not a new wire protocol) and pushes a
+  `self: true` entry onto the shared feed for immediate display.
+- **Storyteller side** (`seat-modal.ts`'s `buildMessageLog()`): scoped per-seat rather
+  than a single global list, since a seat's popup is already "everything about this
+  player" — a simple two-way `SeatMessage{ts, self, text}` log plus a quick-send input,
+  living alongside (not replacing) the structured night-card composer in the same
+  popup. Sent night *cards* remain tracked separately in the global, ST-only audit log
+  (`grimoire-panel.ts`) — the per-seat message log is only plain text exchange.
+- The `messagesBySeat: Map<seat, SeatMessage[]>` map lives in `host-room/index.ts`
+  (persistent for the room's lifetime) for the same reason the message/card feed does
+  on the Player side and the listener Sets exist at all: `grimoire-panel.ts` is torn
+  down and recreated every time its tab is (re)activated, so if the map lived there
+  instead, a message arriving while the Storyteller was on the Script tab would be
+  lost. `grimoire-panel.ts` registers its *own* `onPlayerMessage` too, but only to
+  decide whether to live-refresh an already-open seat popup — it must not also push
+  into the map, or messages would double up.
 
 ## Known accepted limitations
 
@@ -406,10 +448,10 @@ is reserved for rare, user-initiated screen transitions only.
   project's own TODO.md suggested) — this is a third-party host we don't control and
   could change its URL scheme without notice; if tokens stop rendering, that's the
   first thing to check.
-- Ability/flavor text for the 22 Trouble Brewing characters in `data/characters.ts`
-  was written from memory of the official script, not transcribed from a source file —
-  spot-check exact wording against a physical almanac/character sheet before trusting
-  it verbatim at the table.
+- Ability/flavor/night-info/clarification text for the 22 Trouble Brewing characters in
+  `data/characters.ts` has been hand-refined against the official script; if it's ever
+  regenerated or touched wholesale again, don't silently overwrite this without
+  checking with whoever last edited it.
 - The room code doubles as both the Trystero `roomId` and the `password` (for signaling
   encryption). Both create and join paths normalize it (trim + uppercase) since a
   mismatch silently produces two disjoint rooms with no visible error. Default codes
@@ -428,6 +470,16 @@ is reserved for rare, user-initiated screen transitions only.
 - The Setup modal's "randomize seat assignment" button is disabled unless the number
   of selected characters exactly equals the number of seats — there's no partial/
   best-effort assignment for a mismatched count.
+- Mobile viewports are not specially reflowed to avoid all scrolling — the explicit
+  design choice (per TODO.md) is that a Player can pinch-zoom instead, so small-screen
+  layouts prioritize fitting real content (the seat circle, the composer's button
+  grids) over shrinking everything to avoid ever needing zoom.
+- `#app`'s fixed-height/`overflow: hidden` shell (see "Fit-to-screen layout" in
+  TODO.md) assumes each screen manages its own internal scrolling correctly. If you
+  add a new screen or panel with a lot of content and it doesn't have a `min-height: 0`
+  chain down to whichever element should scroll, content can get silently clipped
+  instead of scrolling — this is a real footgun of the fixed-shell approach, worth
+  checking whenever a new panel is added.
 
 ## Running locally / testing
 
@@ -457,9 +509,21 @@ is reserved for rare, user-initiated screen transitions only.
   - Setup modal: toggle characters including Baron → outsider count in the running
     tally should read +2 / townsfolk -2 versus the base distribution; "randomize seat
     assignment" should stay disabled until selected count equals seat count.
-  - Switch away from the Messages tab, have another device send a message, switch
-    back → the message should be there (this is the scenario the listener-Set
-    refactor above exists to fix — regression-test it specifically).
+  - Switch the Storyteller away from the Grimoire tab (e.g. to Script), have a Player
+    send a message/"Got it" → switch back to the Grimoire and open that seat's popup
+    → the message should be there (this is the scenario the listener-Set refactor
+    above exists to fix — regression-test it specifically; `messagesBySeat` living in
+    `host-room/index.ts` rather than `grimoire-panel.ts` is what makes this work).
+  - A Player on Town Square (not Night Actions) when the Storyteller assigns/changes
+    their character or the roster otherwise changes → Town Square should update in
+    place without needing to switch tabs and back.
+  - Send a plain "Got it" from Night Actions, and separately have the Storyteller send
+    a quick message from a seat's popup → both should land in the same chronological
+    feed/log on the respective side, not a separate list.
+  - Resize the browser window (or check on an actual desktop monitor) → the Grimoire's
+    seat circle should visibly grow on a wider/taller window, the tab bar should never
+    scroll out of view even with many seats, and the Script view's character list
+    should use multiple columns rather than one long scrolling column.
   - A brand-new device joining (no matching reconnect token) should appear in a
     vacant seat's "Assign a connected player" list, not automatically get its own
     seat; assigning it should move it out of that list and into the seat, and a
