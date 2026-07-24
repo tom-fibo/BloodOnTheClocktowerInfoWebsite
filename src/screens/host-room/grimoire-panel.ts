@@ -210,7 +210,7 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     if (seatCount < 2) return 0
     const neededChord = TOKEN_WIDTH_PX + MIN_TOKEN_GAP_PX
     const radiusFraction = CIRCLE_RADIUS_PERCENT / 100
-    return neededChord / (2 * radiusFraction * Math.sin(Math.PI / seatCount))
+    return (neededChord / (2 * radiusFraction * Math.sin(Math.PI / seatCount))) + 50;
   }
 
   // Sizes the circle to whatever space is actually available above the
