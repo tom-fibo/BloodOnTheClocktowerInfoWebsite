@@ -222,7 +222,7 @@ function buildComposer(
 }
 
 function buildMessageLog(handle: HostRoomHandle, seat: PlayerInfo): HTMLElement {
-  const messages = handle.getSeatMessages(seat.seat)
+  const messages = [...handle.getSeatMessages(seat.seat)].reverse()
   const logList = el(
     'ul',
     { className: 'audit-log-list seat-message-log' },
@@ -251,18 +251,41 @@ export function buildSeatModalContent(
 ): HTMLElement {
   const characterId = handle.getCharacterAssignment(seat.seat)
   const nameInput = el('input', { className: 'seat-name-input', value: seat.name })
-  const aliveCheckbox = el('input', { type: 'checkbox', checked: seat.alive })
-  const voteCheckbox = el('input', { type: 'checkbox', checked: seat.voteToken })
 
   nameInput.addEventListener('change', () => {
     handle.renameSeat(seat.seat, nameInput.value.trim() || seat.name)
     callbacks.onUpdate()
   })
-  aliveCheckbox.addEventListener('change', () => {
-    handle.setAlive(seat.seat, aliveCheckbox.checked)
-    callbacks.onUpdate()
+
+  const aliveToggle = el('button', {
+    className: `toggle-button${seat.alive ? ' active' : ''}`,
+    textContent: 'Alive',
+    onclick: () => {
+      handle.setAlive(seat.seat, !seat.alive)
+      callbacks.onUpdate()
+    },
   })
-  voteCheckbox.addEventListener('change', () => handle.setVoteToken(seat.seat, voteCheckbox.checked))
+  const voteToggle = el('button', {
+    className: `toggle-button${seat.voteToken ? ' active' : ''}`,
+    textContent: 'Vote token',
+    onclick: () => {
+      handle.setVoteToken(seat.seat, !seat.voteToken)
+      callbacks.onUpdate()
+    },
+  })
+  // Storyteller-only: a private "will die tonight" mark, rendered on the
+  // Grimoire as a gray slash rather than the full death shroud — see
+  // "Reveal deaths" in grimoire-panel.ts for the public reveal step. Only
+  // meaningful for a currently-alive seat.
+  const diesTonightToggle = el('button', {
+    className: `toggle-button${handle.getDiesTonight(seat.seat) ? ' active' : ''}`,
+    textContent: 'Dies tonight',
+    disabled: !seat.alive,
+    onclick: () => {
+      handle.setDiesTonight(seat.seat, !handle.getDiesTonight(seat.seat))
+      callbacks.onUpdate()
+    },
+  })
 
   const characterRow = el('div', { className: 'seat-detail-row' }, [
     el('label', { textContent: 'Character:' }),
@@ -321,7 +344,7 @@ export function buildSeatModalContent(
   const seatNoteInput = el('textarea', {
     className: 'seat-private-note-input',
     rows: 2,
-    placeholder: 'Private reminder (e.g. "protected by Monk")…',
+    placeholder: 'Private reminder…',
     value: handle.getSeatNote(seat.seat),
   })
   seatNoteInput.addEventListener('input', () => handle.setSeatNote(seat.seat, seatNoteInput.value))
@@ -345,10 +368,7 @@ export function buildSeatModalContent(
       textContent: seat.peerId === null ? 'No device connected to this seat.' : 'Connected.',
     }),
     vacantSection,
-    el('div', { className: 'seat-detail-row' }, [
-      el('label', {}, [aliveCheckbox, ' Alive']),
-      el('label', {}, [voteCheckbox, ' Has vote token']),
-    ]),
+    el('div', { className: 'seat-detail-row seat-toggle-row' }, [aliveToggle, voteToggle, diesTonightToggle]),
     characterRow,
     el('label', { textContent: 'Private reminder:' }),
     seatNoteInput,

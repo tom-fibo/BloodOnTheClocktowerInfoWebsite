@@ -44,6 +44,24 @@ export interface HostRoomHandle {
   assignCharacter(seat: number, characterId: string | null): void
   getCharacterAssignment(seat: number): string | undefined
 
+  // A seat marked to die tonight but not yet revealed — Storyteller-only,
+  // deliberately never part of PlayerInfo/the broadcast roster (unlike
+  // `alive`, which is public). Rendered on the Grimoire as a gray slash
+  // rather than the full death shroud, so the Storyteller can privately plan
+  // ahead without leaking anything to Players.
+  getDiesTonight(seat: number): boolean
+  setDiesTonight(seat: number, diesTonight: boolean): void
+  // Clears every "dies tonight" flag and sets those seats to actually dead
+  // (broadcasting the alive change like any other) — the "reveal deaths"
+  // button, pressed once the Storyteller has announced deaths for the night.
+  revealAllDeaths(): void
+
+  // Re-sends the current roster and each connected seat's character —
+  // everything a Player's client needs to bring itself back in sync without
+  // a reload. Used when the Storyteller reopens the Lobby modal, since that's
+  // a natural moment to nudge anyone whose view might be stale.
+  resyncConnectedSeats(): void
+
   // Sending a card also appends it to that seat's message log below — there is
   // no separate global "sent cards" record anymore. Works even if the seat is
   // currently disconnected: the card is queued and delivered once that seat's
@@ -116,6 +134,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   const seatMessages: Record<number, SeatMessage[]> = restored?.seatMessages ?? {}
   const unreadSeats = new Set<number>(restored?.unreadSeats ?? [])
   const pendingCards: Record<number, NightCardPayload[]> = restored?.pendingCards ?? {}
+  const diesTonight = new Set<number>(restored?.diesTonightSeats ?? [])
 
   // Connected-but-not-yet-placed devices. Not persisted: after a Storyteller
   // reload, every peerId here would be stale anyway (fresh Trystero session),
@@ -157,6 +176,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       seatMessages,
       unreadSeats: [...unreadSeats],
       pendingCards,
+      diesTonightSeats: [...diesTonight],
     })
   }
 
@@ -266,6 +286,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       delete seatMessages[seat]
       delete pendingCards[seat]
       unreadSeats.delete(seat)
+      diesTonight.delete(seat)
       broadcastRoster()
       persist()
     },
@@ -320,6 +341,13 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       unreadSeats.delete(seatB)
       if (bUnread) unreadSeats.add(seatA)
       if (aUnread) unreadSeats.add(seatB)
+
+      const aDying = diesTonight.has(seatA)
+      const bDying = diesTonight.has(seatB)
+      diesTonight.delete(seatA)
+      diesTonight.delete(seatB)
+      if (bDying) diesTonight.add(seatA)
+      if (aDying) diesTonight.add(seatB)
 
       for (const token of Object.keys(reconnectTokenToSeat)) {
         if (reconnectTokenToSeat[token] === seatA) reconnectTokenToSeat[token] = seatB
@@ -390,11 +418,47 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       return characterAssignments[seat]
     },
 
+    getDiesTonight(seat) {
+      return diesTonight.has(seat)
+    },
+    setDiesTonight(seat, diesTonightFlag) {
+      if (diesTonightFlag) diesTonight.add(seat)
+      else diesTonight.delete(seat)
+      persist()
+    },
+    revealAllDeaths() {
+      if (diesTonight.size === 0) return
+      for (const seat of diesTonight) {
+        const seatEntry = seats.find((p) => p.seat === seat)
+        if (seatEntry) seatEntry.alive = false
+      }
+      diesTonight.clear()
+      broadcastRoster()
+      persist()
+    },
+
+    resyncConnectedSeats() {
+      broadcastRoster()
+      for (const seatEntry of seats) {
+        if (!seatEntry.peerId) continue
+        const characterId = characterAssignments[seatEntry.seat] ?? null
+        characterAssign.send({ characterId, ts: Date.now() }, { target: seatEntry.peerId })
+      }
+    },
+
     sendNightCard(seat, elements) {
       const seatEntry = seats.find((p) => p.seat === seat)
       if (!seatEntry) return
       const ts = Date.now()
-      const payload: NightCardPayload = { elements, ts }
+      // Copy rather than storing the caller's array by reference — the
+      // Storyteller's composer (seat-modal.ts) clears its own array
+      // (`composerElements.length = 0`) immediately after calling this, and
+      // since arrays are passed by reference, storing it as-is meant that
+      // clear also emptied whatever we'd just queued/logged, so a card sent
+      // to a disconnected seat (or even just its own message-log entry)
+      // showed up blank once actually rendered.
+      const elementsCopy = [...elements]
+      const payload: NightCardPayload = { elements: elementsCopy, ts }
       if (seatEntry.peerId) {
         nightCard.send(payload, { target: seatEntry.peerId })
       } else {
@@ -405,7 +469,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
         pendingCards[seat] = queue
       }
       const log = seatMessages[seat] ?? []
-      log.push({ ts, self: true, elements })
+      log.push({ ts, self: true, elements: elementsCopy })
       seatMessages[seat] = log
       persist()
     },

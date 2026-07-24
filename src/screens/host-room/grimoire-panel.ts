@@ -104,6 +104,7 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
           className: [
             'seat-token',
             !seat.alive ? 'dead' : '',
+            seat.alive && handle.getDiesTonight(seat.seat) ? 'dying' : '',
             activeSeat === seat.seat ? 'selected' : '',
             seat.peerId === null ? 'disconnected' : '',
             pickingPlayer ? 'pickable' : '',
@@ -123,7 +124,7 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
           },
         },
         [
-          renderTokenImage(character?.tokenUrl, character ? character.name : seat.name),
+          renderTokenImage(character?.tokenUrl, character ? character.name : seat.name, !seat.voteToken),
           el('span', { className: 'seat-token-name', textContent: seat.name }),
           ...(character ? [el('span', { className: 'seat-token-character', textContent: character.name })] : []),
           ...(unread.has(seat.seat) ? [el('span', { className: 'unread-dot', title: 'Unread message' })] : []),
@@ -132,6 +133,7 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     })
     circleContainer.replaceChildren(...tokens)
     layoutInCircle(circleContainer)
+    revealDeathsButton.disabled = !seats().some((seat) => handle.getDiesTonight(seat.seat))
   }
 
   function refreshNightOrder(): void {
@@ -173,6 +175,19 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     otherNightsButton.className = isFirstNight ? 'secondary' : 'primary'
   }
 
+  // Pressed once the Storyteller has announced the night's deaths at the
+  // table — clears every "dies tonight" flag and marks those seats actually
+  // dead (a public change, unlike the flag itself). Disabled when nothing is
+  // currently flagged (kept in sync inside refreshTokenGrid).
+  const revealDeathsButton = el('button', {
+    className: 'secondary',
+    textContent: 'Reveal deaths',
+    onclick: () => {
+      handle.revealAllDeaths()
+      refreshTokenGrid()
+    },
+  })
+
   container.replaceChildren(
     el('div', { className: 'grimoire-layout' }, [
       el('div', { className: 'grimoire-main' }, [
@@ -182,6 +197,7 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
             el('button', { className: 'secondary', textContent: 'Lobby', onclick: () => openLobbyModal(handle) }),
             el('button', { className: 'secondary', textContent: '+ Add seat', onclick: () => { handle.addSeat(); refreshTokenGrid() } }),
             el('button', { className: 'secondary', textContent: 'Setup', onclick: () => openSetupModal(handle, () => { refreshTokenGrid(); refreshNightOrder() }) }),
+            revealDeathsButton,
           ]),
         ]),
         pickingBanner,

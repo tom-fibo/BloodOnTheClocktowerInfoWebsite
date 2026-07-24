@@ -25,6 +25,10 @@ export interface HostState {
   // can still prep and send a card for someone not currently looking at their
   // phone; it's queued here and delivered once that seat's `hello` reconnects.
   pendingCards: Record<number, NightCardPayload[]>
+  // Seats flagged to die tonight but not yet revealed — Storyteller-only,
+  // deliberately separate from PlayerInfo.alive (which is public). Serialized
+  // as an array (plain JSON has no Set); room.ts converts to/from a Set.
+  diesTonightSeats: number[]
 }
 
 function storageKey(roomCode: string): string {

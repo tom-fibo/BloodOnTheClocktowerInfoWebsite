@@ -41,7 +41,7 @@ function seatTokenChildren(seat: PlayerInfo): (Node | string)[] {
   const predictedId = predictions.get(seat.seat)
   const predicted = predictedId ? getCharacter(predictedId) : undefined
   return [
-    renderTokenImage(predicted?.tokenUrl, predicted ? predicted.name : seat.name),
+    renderTokenImage(predicted?.tokenUrl, predicted ? predicted.name : seat.name, !seat.voteToken),
     el('span', { className: 'seat-token-name', textContent: seat.name }),
     ...(predicted ? [el('span', { className: 'seat-token-character', textContent: predicted.name })] : []),
   ]

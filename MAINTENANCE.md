@@ -144,6 +144,17 @@ the targeted `characterAssign` action. When code needs "what character is in sea
 it goes through `handle.getCharacterAssignment(seat)` (Storyteller-side only) — there
 is no code path that lets this leak into a broadcast payload. Keep it that way.
 
+The "dies tonight" flag (`diesTonight: Set<number>`, alongside `characterAssignments` in
+`room.ts`'s closure, persisted as `HostState.diesTonightSeats`) follows the exact same
+pattern and for the exact same reason: it must never be derivable from anything sent
+over the wire, or a technically-inclined Player could learn a death is coming before
+it's announced by inspecting the roster payload in devtools. Unlike `characterId`
+there's no targeted "reveal to just this seat" action for it either — it's pure
+Storyteller-side bookkeeping until `revealAllDeaths()` flips the affected seats' public
+`alive` field and broadcasts that like any other roster change. If you're ever tempted
+to fold `diesTonight` into `PlayerInfo` "just to simplify the types," don't — that would
+put it in the broadcast roster and defeat the entire point of the feature.
+
 ### Night cards: one composable payload, not one type per ability
 
 `NightCardElement` (`types.ts`) is a flat tagged interface, not a discriminated union —
@@ -198,6 +209,22 @@ persisting. `removeSeat`/`swapSeats` keep `pendingCards` in sync the same way th
 `seat-modal.ts` uses to decide whether to show the Send button as a normal "Send card"
 or an orange/warning-colored "Queue card" with an inline warning line — this is a pure
 read, it doesn't affect whether sending is allowed (it always is).
+
+**This shipped with a real bug, worth understanding if you touch `sendNightCard`
+again:** it originally stored the caller's `elements` array *by reference* in the sent
+payload, the `seatMessages` log entry, and the `pendingCards` queue entry. But
+`seat-modal.ts`'s Send button clears its own composer array **in place**
+(`composerElements.length = 0`) immediately after calling `sendNightCard` — and since
+arrays are reference types, that mutation reached into all three places the array had
+just been stashed. For an immediately-delivered card this was invisible (the WebRTC
+send had already serialized the data before the array was cleared), but a *queued*
+card for a disconnected seat — and the Storyteller's own message-log entry for
+literally any sent card, once the seat popup was reopened later — ended up rendering
+as an empty card ("0 info"). The fix: `sendNightCard` now makes one `[...elements]`
+copy up front and stores/sends that copy everywhere, decoupling it from whatever the
+caller does to its own array afterward. If you add another call site that hands
+`room.ts` a live, mutable array (rather than a fresh literal), assume the same trap
+applies and copy defensively.
 
 ### Every payload interface needs the index signature (still true, 4 payload types for 5 actions)
 
@@ -271,8 +298,10 @@ who switches devices.
   code): the Storyteller's `seats`, `scriptId`, `characterAssignments`,
   `reconnectTokenToSeat` map, `seatNotes` (private per-seat reminders), `seatMessages`
   (the per-seat sent/received card log — see "Messages and night cards are unified"
-  below), `unreadSeats`, and general notes, serialized to `localStorage` on every
-  mutation and restored on `createHostRoom()` init. All restored `peerId`s are
+  below), `unreadSeats`, `pendingCards`, `diesTonightSeats` (see "Privacy: why
+  character assignment is never in the roster" above), and general notes, serialized to
+  `localStorage` on every mutation and restored on `createHostRoom()` init. All restored
+  `peerId`s are
   immediately reset to `null` — they belonged to the previous Trystero session
   (`selfId` is fresh every reload) and are stale until each seat's occupant reconnects
   and its `hello` is matched via `reconnectTokenToSeat`. Cleared on an explicit "Leave
@@ -340,6 +369,62 @@ things on the wire — nothing re-checked the connection once the banner appeare
 automatically, gated by the same `isModalOpen()`/`pendingElements` guard as above. The
 banner itself also gained a manual "Refresh connection" button (same `location.reload()`
 as the Storyteller's Lobby modal button) for the impatient/guarded-out case.
+
+`HostRoomHandle.resyncConnectedSeats()` is a different, ST-triggered nudge: it
+re-broadcasts the roster and re-sends `characterAssign` to every currently-connected
+seat, without touching any state. `lobby-modal.ts` calls it every time the modal opens.
+This exists because a Player's view can in principle go stale for reasons the app
+can't detect on its own (a dropped/late message, a tab that was suspended and resumed
+without triggering the watchdog, etc.) — reopening the Lobby is a natural, low-cost
+moment for the Storyteller to force everyone back in sync, cheaper than asking a Player
+to reload. It deliberately reuses the existing `characterAssign`/`roster` actions and
+their already-wired-up listeners (`onCharacterAssign` refreshes "Your Character" in
+`night-actions-panel.ts`, `onRosterChange` refreshes Town Square's roster) rather than
+introducing a new "resync" action — there's nothing this needs to do that resending
+those two doesn't already cover.
+
+### "Dies tonight": a hidden flag, kept structurally separate from `alive`
+
+`diesTonight: Set<number>` (in `room.ts`'s closure, persisted as
+`HostState.diesTonightSeats`) lets the Storyteller mark a seat to die tonight without
+revealing anything to Players before the morning announcement — see "Privacy: why
+character assignment is never in the roster" above for why this can't live on
+`PlayerInfo`. `setDiesTonight(seat, flag)` only toggles the flag and persists; it does
+NOT touch `seat.alive`. `revealAllDeaths()` is the one action that turns a hidden flag
+into a public fact: for every seat in the set, it sets `alive = false`, then clears the
+set and broadcasts the roster like any other public change. `seat-modal.ts` disables
+the "Dies tonight" toggle for an already-dead seat (`disabled: !seat.alive`) since the
+flag is only meaningful as a "not yet" state. `grimoire-panel.ts`'s "Reveal deaths"
+button in the tokens header is disabled whenever nothing is currently flagged (checked
+fresh inside `refreshTokenGrid()` on every render, not tracked as separate state).
+
+On the Grimoire, a flagged-but-still-alive seat gets a `.dying` class instead of
+`.dead` — CSS-wise this means the gray diagonal slash (`::after`) without the
+grayscale/darken `filter` that `.dead` applies, so the token stays recognizable at a
+glance while still visibly marked. `.dying` is only ever computed/applied in
+`grimoire-panel.ts`; Town Square has no equivalent, because `diesTonight` was never
+sent to it in the first place — there's no rendering-layer check to "hide" it from
+Players, the data structurally can't reach them.
+
+### Toggle buttons and the no-vote-token indicator
+
+Alive/Vote token (and the new Dies tonight) used to be `<input type="checkbox">` +
+`<label>` pairs in the seat popup; they're now `.toggle-button` elements whose `.active`
+class is recomputed from current seat state every time the popup rebuilds (the same
+"just re-render the whole thing" pattern the rest of this codebase already uses instead
+of hand-patching individual DOM nodes) — smaller footprint, and consistent with the
+rest of the composer's button-grid UI rather than mixing in native form controls.
+
+A seat with no vote token (independent of alive/dead/dying — a dead seat commonly has
+already spent its one ghost vote) gets a `no-vote` class on its `.seat-token-image`
+(now accepted as a third parameter to `ui/token-image.ts`'s `renderTokenImage()`),
+rendering a small purple circle (`--vote-missing`) concentric with the token via
+`::before`. `::after` on the same element is already spoken for by the death/dying
+overlays, which is exactly why the vote-missing indicator had to use the other
+available pseudo-element slot — the two need to be able to coexist (a dead seat with no
+vote token is the common case, not an edge case). Applied identically on both the
+Grimoire (`grimoire-panel.ts`) and Town Square (`town-square-panel.ts`'s shared
+`seatTokenChildren()`), unlike `.dying` which is Grimoire-only.
 
 ## Shared modal system + the seat popup's callback design
 
@@ -479,9 +564,11 @@ src/
     modal.ts                         # openModal()/updateModalContent()/closeModal() — shared
                                       # single-overlay-slot dialog primitive, see "Shared modal
                                       # system" above
-    token-image.ts                   # renderTokenImage() — always wraps an <img> (or placeholder
-                                      # initial) in a container div; needed because a death-shroud
-                                      # ::after overlay doesn't render on a bare <img> in any browser
+    token-image.ts                   # renderTokenImage(tokenUrl, name, noVoteToken?) — always
+                                      # wraps an <img> (or placeholder initial) in a container div;
+                                      # needed because a death-shroud ::after overlay doesn't render
+                                      # on a bare <img> in any browser. noVoteToken adds a ::before
+                                      # purple-circle overlay, concentric with the token
     circular-layout.ts                # layoutInCircle() — positions a container's children
                                        # evenly around a circle (Grimoire + Town Square seating);
                                        # container must be square (aspect-ratio: 1)
@@ -510,21 +597,27 @@ src/
                                           # Grimoire's seat popup). No longer owns any per-seat
                                           # message state itself — that all lives in room.ts now.
       grimoire-panel.ts                   # seat circle (layoutInCircle, with an unread-dot per
-                                           # seat), a "Lobby" button (lobby-modal.ts), night-order
-                                           # sidebar (two-column on wide screens), general notes
-                                           # below the fold (no audit log section anymore — sent
-                                           # cards live in each seat's own popup); owns
-                                           # activeSeat/composerElements/pickingPlayer state and
-                                           # opens seat-modal.ts's content into ui/modal.ts; calls
-                                           # handle.markSeatRead() whenever a seat is opened
+                                           # seat, a .dying gray-slash class for a "dies tonight"
+                                           # seat, a no-vote purple-circle overlay), a "Lobby" button
+                                           # (lobby-modal.ts), a "Reveal deaths" button
+                                           # (handle.revealAllDeaths(), disabled when nothing is
+                                           # flagged), night-order sidebar (two-column on wide
+                                           # screens), general notes below the fold (no audit log
+                                           # section anymore — sent cards live in each seat's own
+                                           # popup); owns activeSeat/composerElements/pickingPlayer
+                                           # state and opens seat-modal.ts's content into
+                                           # ui/modal.ts; calls handle.markSeatRead() whenever a seat
+                                           # is opened
       seat-modal.ts                        # buildSeatModalContent() — per-seat popup, a two-column
                                             # layout (game state left, messages + night card
-                                            # composer right) on wide screens: rename/remove/alive/
-                                            # vote/character-assign, vacant-seat "assign a connected
-                                            # player" list, a private per-seat reminder note, a
-                                            # read-only per-seat message log (reads
-                                            # handle.getSeatMessages() fresh, no compose box of its
-                                            # own anymore), and the night card composer (quick
+                                            # composer right) on wide screens: rename/remove,
+                                            # Alive/Vote token/Dies tonight as compact .toggle-button
+                                            # elements (not checkboxes), character-assign,
+                                            # vacant-seat "assign a connected player" list, a private
+                                            # per-seat reminder note, a read-only per-seat message
+                                            # log (reads handle.getSeatMessages() fresh and reverses
+                                            # it — newest message first — no compose box of its own
+                                            # anymore), and the night card composer (quick
                                             # element buttons, autofill preset cards, "Player"-
                                             # picking flow). The composer works even for a
                                             # disconnected seat — the Send button relabels to
@@ -537,7 +630,9 @@ src/
       lobby-modal.ts                         # openLobbyModal() — Storyteller-only overview of
                                               # every connected device, seated or not, plus a manual
                                               # "Refresh connection" button (same as the automatic
-                                              # connection watchdog, triggered on demand)
+                                              # connection watchdog, triggered on demand). Also calls
+                                              # handle.resyncConnectedSeats() every time it opens, to
+                                              # nudge any Player whose view might have gone stale
       script-panel.ts                       # script <select> (currently one option) + renderScriptView
     join-room/
       index.ts                          # creates the PlayerRoomHandle, compact room header
@@ -625,7 +720,10 @@ either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely 
   `buildMessageLog()` reads it fresh via `handle.getSeatMessages(seat)` every time the
   popup (re)builds — it does NOT take the log as a parameter passed by reference
   anymore, and has no input box; it's a plain read-only rendering of
-  `describeNightCardElement(...)` joined per entry.
+  `describeNightCardElement(...)` joined per entry, reversed (`[...messages].reverse()`)
+  so the newest message renders at the top — `getSeatMessages()` itself still returns
+  in storage order (oldest first), so don't assume the array is already reversed if you
+  add another reader of it.
 - **Unread indicator:** `unreadSeats: Set<number>` (persisted as an array) lives
   alongside `seatMessages` in `room.ts`. `playerCard.onMessage` adds the seat to it and
   fires `onUnreadChange`; `handle.markSeatRead(seat)` (called by `grimoire-panel.ts`'s

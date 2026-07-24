@@ -47,6 +47,11 @@ export function openLobbyModal(handle: HostRoomHandle): void {
   const content = build()
   openModal(content, 'lobby-modal-overlay')
 
+  // Opening the Lobby is a natural moment to nudge every connected Player back
+  // into sync (fresh roster + re-sent character) — cheaper than asking them to
+  // reload, and catches a client whose view went stale for any reason.
+  handle.resyncConnectedSeats()
+
   // Live-refresh in place (preserves scroll) while this modal stays open.
   handle.onRosterChange(() => updateModalContent(build()))
   handle.onUnseatedChange(() => updateModalContent(build()))

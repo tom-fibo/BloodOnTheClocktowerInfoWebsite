@@ -14,6 +14,7 @@
   --danger-bg: #3a1414;
   --warning: #d98a2b;
   --warning-bg: #3a2a10;
+  --vote-missing: #a855f7;
 
   color-scheme: dark;
   font: 16px/1.45 system-ui, 'Segoe UI', Roboto, sans-serif;
@@ -34,6 +35,7 @@
     --danger-bg: #fee2e2;
     --warning: #b45309;
     --warning-bg: #fef3c7;
+    --vote-missing: #9333ea;
 
     color-scheme: light;
   }
@@ -405,6 +407,40 @@ button.danger {
   background: linear-gradient(160deg, rgba(220, 220, 220, 0.05) 0%, rgba(190, 190, 190, 0.35) 45%, rgba(120, 120, 120, 0.6) 100%);
 }
 
+/* "Dies tonight" — a Storyteller-only mark for a death not yet announced.
+   Deliberately NOT the same treatment as .dead (no grayscale/darken filter,
+   the icon stays fully visible) — just a gray diagonal slash drawn over it,
+   so the Storyteller can tell the two states apart at a glance. This class is
+   only ever applied on the Grimoire (never Town Square), since the
+   underlying flag isn't part of the broadcast roster in the first place. */
+.seat-token.dying .seat-token-image::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(45deg, transparent 44%, rgba(150, 150, 150, 0.9) 48%, rgba(150, 150, 150, 0.9) 52%, transparent 56%);
+}
+
+/* No vote token — a small purple circle concentric with (layered directly
+   over the center of) the token image, independent of alive/dead/dying,
+   since a dead seat has commonly already spent its one ghost vote. Uses
+   ::before since ::after is already spoken for by the death/dying overlays
+   above, and the two need to be able to appear together. */
+.seat-token-image.no-vote::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 30%;
+  height: 30%;
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 50%;
+  background: var(--vote-missing);
+  border: 2px solid var(--bg-alt);
+  z-index: 2;
+}
+
 .seat-token-name {
   font-size: 0.8rem;
   font-weight: 600;
@@ -454,6 +490,28 @@ button.danger {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--accent);
+}
+
+/* Alive/Vote token/Dies tonight — compact toggle buttons (replacing
+   checkboxes) that show their own state via .active rather than a separate
+   checkbox+label pair, so they take less horizontal space. */
+.seat-toggle-row {
+  gap: 0.4rem;
+}
+
+.toggle-button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+  border-radius: 999px;
+}
+
+.toggle-button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .night-card-composer {
