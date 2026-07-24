@@ -2,12 +2,14 @@ import { el } from '../../ui/dom'
 import type { HostRoomHandle } from '../../trystero/room'
 import { getCharacter } from '../../data/characters'
 import { attachCharacterTrigger } from '../../ui/character-popup'
-import { openModal, closeModal } from '../../ui/modal'
+import { openModal, updateModalContent, closeModal } from '../../ui/modal'
 import { layoutInCircle } from '../../ui/circular-layout'
 import { deriveNightOrder } from '../../game/night-order'
 import { nightCardElement } from '../../game/night-card'
+import { renderTokenImage } from '../../ui/token-image'
 import { buildSeatModalContent, type SeatMessage } from './seat-modal'
 import { openSetupModal } from './setup-modal'
+import { openLobbyModal } from './lobby-modal'
 import type { NightCardElement, PlayerInfo } from '../../types'
 
 export function renderGrimoirePanel(
@@ -20,7 +22,6 @@ export function renderGrimoirePanel(
   let pickingPlayer = false
   let isFirstNight = true
 
-  const pinnedBanner = el('p', { className: 'grimoire-pinned-note hidden' })
   const pickingBanner = el('div', { className: 'picking-banner hidden' }, [
     el('span', { textContent: 'Tap a seat to add it as a Player…' }),
     el('button', {
@@ -40,7 +41,7 @@ export function renderGrimoirePanel(
   const notesInput = el('textarea', {
     className: 'grimoire-notes-input',
     rows: 3,
-    placeholder: 'Private notes (first line can be pinned above)…',
+    placeholder: 'General private notes…',
   })
 
   function seats(): PlayerInfo[] {
@@ -51,13 +52,6 @@ export function renderGrimoirePanel(
     return seats()
       .map((seat) => handle.getCharacterAssignment(seat.seat))
       .filter((id): id is string => Boolean(id))
-  }
-
-  function refreshPinnedNote(): void {
-    const note = handle.getNote()
-    const firstLine = note.split('\n')[0]?.trim()
-    pinnedBanner.textContent = firstLine ?? ''
-    pinnedBanner.classList.toggle('hidden', !firstLine)
   }
 
   function openSeatFor(seatNumber: number | null, resetComposer: boolean): void {
@@ -92,9 +86,16 @@ export function renderGrimoirePanel(
         activeSeat = null
       },
     })
-    openModal(content, 'seat-modal-overlay', () => {
-      activeSeat = null
-    })
+    // A refresh (resetComposer false) updates the already-open modal's content
+    // in place so its scroll position survives — recreating the overlay from
+    // scratch on every composer click/checkbox toggle was resetting scroll to
+    // the top each time. Falls back to a full open if nothing was open yet
+    // (e.g. reopening after the "Player" picking flow closed it).
+    if (resetComposer || !updateModalContent(content)) {
+      openModal(content, 'seat-modal-overlay', () => {
+        activeSeat = null
+      })
+    }
   }
 
   function refreshTokenGrid(): void {
@@ -126,12 +127,9 @@ export function renderGrimoirePanel(
           },
         },
         [
-          character?.tokenUrl
-            ? el('img', { className: 'seat-token-image', src: character.tokenUrl, alt: character.name })
-            : el('div', { className: 'seat-token-image placeholder', textContent: seat.name.slice(0, 1).toUpperCase() }),
+          renderTokenImage(character?.tokenUrl, character ? character.name : seat.name),
           el('span', { className: 'seat-token-name', textContent: seat.name }),
           ...(character ? [el('span', { className: 'seat-token-character', textContent: character.name })] : []),
-          ...(!seat.alive ? [el('span', { className: 'shroud-icon', textContent: '🪦' })] : []),
         ],
       )
     })
@@ -199,18 +197,23 @@ export function renderGrimoirePanel(
   container.replaceChildren(
     el('div', { className: 'grimoire-layout' }, [
       el('div', { className: 'grimoire-main' }, [
-        pinnedBanner,
-        pickingBanner,
         el('div', { className: 'grimoire-tokens-header' }, [
           el('h2', { textContent: 'Grimoire' }),
           el('div', { className: 'button-row' }, [
+            el('button', { className: 'secondary', textContent: 'Lobby', onclick: () => openLobbyModal(handle) }),
             el('button', { className: 'secondary', textContent: '+ Add seat', onclick: () => { handle.addSeat(); refreshTokenGrid() } }),
             el('button', { className: 'secondary', textContent: 'Setup', onclick: () => openSetupModal(handle, () => { refreshTokenGrid(); refreshNightOrder() }) }),
           ]),
         ]),
+        pickingBanner,
         circleContainer,
-        el('div', { className: 'grimoire-notes' }, [el('h2', { textContent: 'Notes' }), notesInput]),
-        el('div', { className: 'grimoire-audit-log' }, [el('h2', { textContent: 'Sent cards (Storyteller only)' }), auditLogList]),
+        // Deliberately scrollable rather than fighting for space with the
+        // circle above — the circle should always be fully visible; notes and
+        // sent-card history scrolling is an accepted tradeoff.
+        el('div', { className: 'grimoire-below-fold' }, [
+          el('div', { className: 'grimoire-notes' }, [el('h2', { textContent: 'Notes' }), notesInput]),
+          el('div', { className: 'grimoire-audit-log' }, [el('h2', { textContent: 'Sent cards (Storyteller only)' }), auditLogList]),
+        ]),
       ]),
       el('div', { className: 'grimoire-sidebar' }, [
         el('div', { className: 'night-order-header' }, [
@@ -223,10 +226,7 @@ export function renderGrimoirePanel(
   )
 
   notesInput.value = handle.getNote()
-  notesInput.addEventListener('input', () => {
-    handle.setNote(notesInput.value)
-    refreshPinnedNote()
-  })
+  notesInput.addEventListener('input', () => handle.setNote(notesInput.value))
 
   handle.onRosterChange(() => {
     refreshTokenGrid()
@@ -240,12 +240,10 @@ export function renderGrimoirePanel(
   // The map itself is populated by a persistent subscription up in
   // host-room/index.ts (so messages aren't lost while a different tab is
   // active) — this one just refreshes the modal if it's open for that seat.
-  handle.onPlayerMessage((msg) => {
-    const seatEntry = seats().find((s) => s.peerId === msg.peerId)
-    if (seatEntry && activeSeat === seatEntry.seat) openSeatFor(activeSeat, false)
+  handle.onPlayerCard((card) => {
+    if (activeSeat === card.seat) openSeatFor(activeSeat, false)
   })
 
-  refreshPinnedNote()
   refreshTokenGrid()
   refreshNightOrder()
   refreshAuditLog()

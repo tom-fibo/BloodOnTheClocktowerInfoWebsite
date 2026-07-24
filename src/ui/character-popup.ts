@@ -24,9 +24,9 @@ export function openCharacterPopup(characterId: string): void {
     el('p', { className: 'character-popup-type', textContent: typeLabel }),
     el('p', { className: 'character-popup-ability', textContent: character.ability }),
     ...(character.clarification
-      ? [el('p', { className: 'character-popup-clarification', textContent: `Clarification: ${character.clarification}` })]
+      ? [el('p', { className: 'character-popup-clarification', textContent: character.clarification })]
       : []),
-    ...(character.flavor ? [el('p', { className: 'character-popup-flavor', textContent: character.flavor })] : []),
+    ...(character.flavor ? [el('p', { className: 'character-popup-flavor', textContent: `"${character.flavor}"` })] : []),
     ...nightLines,
     ...(character.wikiUrl
       ? [
@@ -35,7 +35,7 @@ export function openCharacterPopup(characterId: string): void {
             href: character.wikiUrl,
             target: '_blank',
             rel: 'noopener noreferrer',
-            textContent: 'Wiki page ↗',
+            textContent: 'Wiki Page ↗',
           }),
         ]
       : []),

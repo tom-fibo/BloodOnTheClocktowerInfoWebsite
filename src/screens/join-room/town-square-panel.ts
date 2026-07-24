@@ -3,9 +3,10 @@ import type { PlayerRoomHandle } from '../../trystero/room'
 import { getScript } from '../../data/scripts'
 import { suggestDistribution } from '../../game/setup'
 import { openCharacterPicker } from '../../ui/character-picker'
-import { openModal, closeModal } from '../../ui/modal'
+import { openModal, updateModalContent, closeModal } from '../../ui/modal'
 import { getCharacter } from '../../data/characters'
 import { layoutInCircle } from '../../ui/circular-layout'
+import { renderTokenImage } from '../../ui/token-image'
 import type { PlayerInfo } from '../../types'
 
 export interface TownSquareState {
@@ -18,6 +19,51 @@ export interface TownSquareState {
 // any other unsaved browser state. Keyed by seat number.
 const predictions = new Map<number, string>()
 const notes = new Map<number, string>()
+
+function seatTokenChildren(seat: PlayerInfo): (Node | string)[] {
+  return [
+    renderTokenImage(undefined, seat.name),
+    el('span', { className: 'seat-token-name', textContent: seat.name }),
+    ...(predictions.has(seat.seat)
+      ? [el('span', { className: 'seat-token-character', textContent: getCharacter(predictions.get(seat.seat)!)?.name ?? '' })]
+      : []),
+  ]
+}
+
+// Used by night-actions-panel.ts's composer: "Pressing the Player button shows
+// the Town Square view... so they can select one with context" — reuses the
+// same circle rendering (including predictions) rather than a plain list.
+// Only needs the roster, not the full TownSquareState, since predictions are
+// looked up from the module-level map above (no scriptId involved).
+export function openPlayerPicker(state: { latestRoster: PlayerInfo[] }, onSelect: (seat: PlayerInfo) => void): void {
+  const seats = [...state.latestRoster].sort((a, b) => a.seat - b.seat)
+  const circle = el('div', { className: 'seat-circle town-square-circle' })
+  circle.replaceChildren(
+    ...seats.map((seat) =>
+      el(
+        'button',
+        {
+          className: `seat-token${!seat.alive ? ' dead' : ''}`,
+          onclick: () => {
+            closeModal()
+            onSelect(seat)
+          },
+        },
+        seatTokenChildren(seat),
+      ),
+    ),
+  )
+
+  const content = el('div', { className: 'character-picker-card player-picker-card' }, [
+    el('div', { className: 'character-picker-header' }, [
+      el('h2', { textContent: 'Choose a player' }),
+      el('button', { className: 'character-popup-close', textContent: '✕', onclick: () => closeModal() }),
+    ]),
+    circle,
+  ])
+  openModal(content, 'player-picker-overlay')
+  layoutInCircle(circle)
+}
 
 export function renderTownSquarePanel(container: HTMLElement, handle: PlayerRoomHandle, state: TownSquareState): void {
   const summary = el('p', { className: 'town-square-summary' })
@@ -67,7 +113,9 @@ export function renderTownSquarePanel(container: HTMLElement, handle: PlayerRoom
       noteInput,
     ])
 
-    openModal(content, 'seat-modal-overlay')
+    if (!updateModalContent(content)) {
+      openModal(content, 'seat-modal-overlay')
+    }
   }
 
   function refreshCircle(): void {
@@ -79,14 +127,7 @@ export function renderTownSquarePanel(container: HTMLElement, handle: PlayerRoom
           className: `seat-token${!seat.alive ? ' dead' : ''}${seat.peerId === null ? ' disconnected' : ''}`,
           onclick: () => openSeatModal(seat),
         },
-        [
-          el('div', { className: 'seat-token-image placeholder', textContent: seat.name.slice(0, 1).toUpperCase() }),
-          el('span', { className: 'seat-token-name', textContent: seat.name }),
-          ...(predictions.has(seat.seat)
-            ? [el('span', { className: 'seat-token-character', textContent: getCharacter(predictions.get(seat.seat)!)?.name ?? '' })]
-            : []),
-          ...(!seat.alive ? [el('span', { className: 'shroud-icon', textContent: '🪦' })] : []),
-        ],
+        seatTokenChildren(seat),
       ),
     )
     circle.replaceChildren(...tokens)

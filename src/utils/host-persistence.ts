@@ -17,6 +17,9 @@ export interface HostState {
   reconnectTokenToSeat: Record<string, number>
   auditLog: AuditLogEntry[]
   note: string
+  // Private per-seat reminders (e.g. "protected by Monk") — never sent to the
+  // player, just the Storyteller's own recall aid, shown in that seat's popup.
+  seatNotes: Record<number, string>
 }
 
 function storageKey(roomCode: string): string {

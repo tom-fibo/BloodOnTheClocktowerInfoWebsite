@@ -30,6 +30,18 @@ export function openModal(content: HTMLElement, className = '', onBackdropDismis
   return { close: closeModal }
 }
 
+// Swaps the currently-open overlay's content without tearing down and
+// recreating the overlay element itself — critical for anything that
+// re-renders on every small interaction (a composer button click, a Setup
+// checkbox toggle), since destroying/recreating the overlay resets its
+// scrollTop to 0 every time. Returns false (does nothing) if no modal is
+// currently open, so callers can fall back to `openModal` in that case.
+export function updateModalContent(content: HTMLElement): boolean {
+  if (!currentOverlay) return false
+  currentOverlay.replaceChildren(content)
+  return true
+}
+
 export function closeModal(): void {
   currentOverlay?.remove()
   currentOverlay = null

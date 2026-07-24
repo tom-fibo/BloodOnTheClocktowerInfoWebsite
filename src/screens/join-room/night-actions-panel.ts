@@ -2,7 +2,8 @@ import { el } from '../../ui/dom'
 import type { PlayerRoomHandle } from '../../trystero/room'
 import { getCharacter } from '../../data/characters'
 import { attachCharacterTrigger, openCharacterPopup } from '../../ui/character-popup'
-import { nightCardElement } from '../../game/night-card'
+import { nightCardElement, describeNightCardElement } from '../../game/night-card'
+import { openPlayerPicker } from './town-square-panel'
 import type { NightCardElement, PlayerInfo } from '../../types'
 
 // Messages and night cards are the same feed from the Player's point of view —
@@ -82,6 +83,10 @@ export function renderNightActionsPanel(container: HTMLElement, handle: PlayerRo
   const characterSection = el('div', { className: 'my-character-section' })
   const feedList = el('div', { className: 'received-cards-list' })
   const customInput = el('input', { className: 'composer-input', placeholder: 'Custom text…' })
+  // Queued like the Storyteller's own composer — "Got it," a chosen player, or
+  // custom text can all be added before a single Send, rather than firing
+  // immediately one at a time.
+  let pendingElements: NightCardElement[] = []
 
   function refreshCharacter(): void {
     const character = state.myCharacterId ? getCharacter(state.myCharacterId) : undefined
@@ -143,40 +148,77 @@ export function renderNightActionsPanel(container: HTMLElement, handle: PlayerRo
     )
   }
 
-  function send(elements: NightCardElement[]): void {
-    const text = elements.length === 1 && elements[0].kind === 'text' ? elements[0].text ?? '' : ''
-    if (text) handle.sendToStoryteller(text)
-    state.feed.push({ ts: Date.now(), self: true, elements })
-    refreshFeed()
+  const pendingList = el('ul', { className: 'composer-element-list' })
+  const sendButton = el('button', { className: 'primary send-card-button', textContent: 'Send (0)', disabled: true })
+
+  function refreshPending(): void {
+    pendingList.replaceChildren(
+      ...pendingElements.map((element, index) =>
+        el('li', {}, [
+          el('span', { textContent: describeNightCardElement(element) }),
+          el('button', {
+            className: 'remove-element-button',
+            textContent: '✕',
+            onclick: () => {
+              pendingElements.splice(index, 1)
+              refreshPending()
+            },
+          }),
+        ]),
+      ),
+    )
+    sendButton.textContent = `Send (${pendingElements.length})`
+    sendButton.disabled = pendingElements.length === 0
   }
+
+  function addPending(element: NightCardElement): void {
+    pendingElements.push(element)
+    refreshPending()
+  }
+
+  sendButton.addEventListener('click', () => {
+    if (pendingElements.length === 0) return
+    handle.sendPlayerCard(pendingElements)
+    state.feed.push({ ts: Date.now(), self: true, elements: pendingElements })
+    pendingElements = []
+    refreshPending()
+    refreshFeed()
+  })
 
   const composer = el('div', { className: 'night-actions-composer' }, [
     el('div', { className: 'element-quick-grid' }, [
       el('button', {
         className: 'element-quick-button',
         textContent: 'Got it',
-        onclick: () => send([nightCardElement('text', { text: 'Got it' })]),
+        onclick: () => addPending(nightCardElement('text', { text: 'Got it' })),
+      }),
+      el('button', {
+        className: 'element-quick-button',
+        textContent: 'Player',
+        onclick: () =>
+          openPlayerPicker(state, (seat) => addPending(nightCardElement('player', { name: seat.name, peerId: seat.peerId }))),
       }),
     ]),
     el('div', { className: 'composer-row' }, [
       customInput,
       el('button', {
-        className: 'primary',
-        textContent: 'Send',
+        textContent: 'Add',
         onclick: () => {
           const text = customInput.value.trim()
           if (!text) return
-          send([nightCardElement('text', { text })])
+          addPending(nightCardElement('text', { text }))
           customInput.value = ''
         },
       }),
     ]),
+    pendingList,
+    sendButton,
   ])
   customInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       const text = customInput.value.trim()
       if (!text) return
-      send([nightCardElement('text', { text })])
+      addPending(nightCardElement('text', { text }))
       customInput.value = ''
     }
   })

@@ -55,7 +55,7 @@ player's persistent **reconnect token** (see below). It still regenerates on a f
 page reload, but that no longer means "the same human reappears as a new roster
 row" — see "Seats, reconnect, and persistence" below for how that's now handled.
 
-### The six Trystero actions (`src/trystero/config.ts`, `src/trystero/room.ts`)
+### The seven Trystero actions (`src/trystero/config.ts`, `src/trystero/room.ts`)
 
 - `hello` (Player → Storyteller, targeted): a Player announces/re-announces
   `{name, reconnectToken}` to a peer as soon as `room.onPeerJoin` fires for that peer.
@@ -63,14 +63,21 @@ row" — see "Seats, reconnect, and persistence" below for how that's now handle
   PlayerInfo[]}`. `PlayerInfo` is **public seat data only** — `{seat, name, peerId,
   alive, voteToken}` — deliberately excludes character assignment; see the privacy
   note below.
-- `secretMessage` (both directions, always targeted): `{text, ts}`. Safe to share one
-  action name for both directions because Trystero never loops a peer's own sends back
-  to itself — the Storyteller's handler structurally only ever sees Player-originated
-  messages, and a Player's handler only ever sees Storyteller-originated ones.
+- `secretMessage` (Storyteller → one Player, targeted only in this direction now):
+  `{text, ts}` — the Storyteller's quick-message send box in a seat's popup
+  (`handle.sendToPlayer`). Used to share the same action name for both directions;
+  Players now send their own unprompted content via the richer `playerCard` action
+  instead (see "Messages and night cards are unified" below), so there is no
+  `secretMessage.onMessage` handler on the Storyteller's side anymore.
 - `characterAssign` (Storyteller → one Player, targeted): `{characterId, ts}` — the
   *only* way a Player learns their own character. Never broadcast.
 - `nightCard` (Storyteller → one Player, targeted): `{elements: NightCardElement[],
   ts}` — a composed night card (see "Night cards" below).
+- `playerCard` (Player → Storyteller, targeted): same payload shape as `nightCard`
+  (literally reuses the `NightCardPayload` type — no separate type needed since the
+  shape carries no directional semantics itself) — a Player's own composed card (a
+  "Got it," a chosen player, custom text, or several queued together). The reverse
+  direction of `nightCard`; lands in that seat's message log via `onPlayerCard`.
 - `nightActionResponse` (Player → Storyteller, targeted): `{forTs, chosenPeerId,
   chosenCharacterId, ts}` — a Player's answer to a `choosePlayer`/`chooseCharacter`
   prompt embedded in a card. `chosenPeerId`/`chosenCharacterId` are typed `string |
@@ -138,7 +145,11 @@ fields)` helper rather than writing the object literal by hand — it fills in t
 interface, not `Partial<Omit<NightCardElement, 'kind'>>` — `Omit`/`Pick` over a type
 that has an index signature collapses every named property's type down to the index
 signature's value type, i.e. every field becomes `JsonValue` instead of its specific
-type. Don't try to derive it from `NightCardElement` again.)
+type. Don't try to derive it from `NightCardElement` again.) The same module also
+exports `describeNightCardElement(element)`, a short one-line preview used by every
+composer's pending-list-before-sending and by the Storyteller's per-seat message log
+— it used to be duplicated between `seat-modal.ts` and `night-actions-panel.ts`;
+don't reintroduce a second copy.
 
 A card is `{elements: NightCardElement[], ts}` — the Storyteller composes several
 elements (e.g. a `text` plus a `number`) and sends them as one `nightCard` message,
@@ -155,13 +166,15 @@ finds first. Abilities needing two choices in one prompt (e.g. Fortune Teller's
 extend the response UI to loop over every prompt element and send multiple responses,
 before relying on this for a genuinely two-target ability.
 
-### Every payload interface needs the index signature (still true, now for 6 payloads)
+### Every payload interface needs the index signature (still true, 6 payload types for 7 actions)
 
 Trystero's `makeAction<T>()` requires an explicit `[key: string]: JsonValue` index
 signature on named interfaces passed as `T` (a plain object literal wouldn't need
-this, but a declared interface does) — this now applies to `HelloPayload`,
+this, but a declared interface does) — this applies to `HelloPayload`,
 `RosterPayload`, `SecretMessagePayload`, `CharacterAssignPayload`, `NightCardPayload`,
-and `NightActionResponsePayload` in `types.ts`.
+and `NightActionResponsePayload` in `types.ts`. Six *types* for seven *actions*
+because `playerCard` reuses `NightCardPayload` verbatim rather than needing its own —
+the shape (`{elements, ts}`) carries no inherent direction.
 
 ### Multiple subscribers per event, not one
 
@@ -200,8 +213,9 @@ right seat.
 
 **Enforcing "Players can't message Players":** this is structural, not just a hidden
 UI control. `src/screens/join-room/` has no code path that accepts a Player-supplied
-target peerId — `sendToStoryteller` in `src/trystero/room.ts` hardcodes
-`{target: storytellerId}`. Caveat: a technically sophisticated Player could still
+target peerId — both `sendPlayerCard` and `respondToNightCard` in
+`src/trystero/room.ts` hardcode `{target: storytellerId}`. Caveat: a technically
+sophisticated Player could still
 hand-invoke Trystero from their own devtools console to message another Player
 directly — there is no server in this architecture to prevent that. Accepted
 limitation for an in-person social game; not something to chase.
@@ -221,26 +235,68 @@ who switches devices.
   before" across a Player's reload.
 - **Host state** (`saveHostState`/`loadHostState`/`clearHostState`, keyed by room
   code): the Storyteller's `seats`, `scriptId`, `characterAssignments`,
-  `reconnectTokenToSeat` map, audit log, and notes, serialized to `localStorage` on
-  every mutation and restored on `createHostRoom()` init. All restored `peerId`s are
-  immediately reset to `null` — they belonged to the previous Trystero session
-  (`selfId` is fresh every reload) and are stale until each seat's occupant
-  reconnects and its `hello` is matched via `reconnectTokenToSeat`. Cleared on an
-  explicit "Leave Room" click (`clearHostState`), so intentionally ending a game
-  doesn't leave stale state behind for next time the same room code is reused —
-  but an accidental reload/crash does NOT clear it, which is the whole point.
+  `reconnectTokenToSeat` map, `seatNotes` (private per-seat reminders), audit log, and
+  general notes, serialized to `localStorage` on every mutation and restored on
+  `createHostRoom()` init. All restored `peerId`s are immediately reset to `null` —
+  they belonged to the previous Trystero session (`selfId` is fresh every reload) and
+  are stale until each seat's occupant reconnects and its `hello` is matched via
+  `reconnectTokenToSeat`. Cleared on an explicit "Leave Room" click (`clearHostState`),
+  so intentionally ending a game doesn't leave stale state behind for next time the
+  same room code is reused — but an accidental reload/crash does NOT clear it, which
+  is the whole point.
+
+A third, separate mechanism, `src/utils/session.ts`, is what makes a reload land back
+on the right *screen* at all rather than the landing page — `saveLastSession({screen,
+roomCode, selfName})` is called on entering `host-room`/`join-room`, `main.ts` reads
+it back via `loadLastSession()` on boot (unless a `?join=` URL param is present, which
+always wins — see below) and re-navigates there, and `clearLastSession()` runs on an
+explicit "Leave Room" click, mirroring `clearHostState`'s reasoning. This is purely a
+*navigation* aid — the actual rejoin correctness still comes entirely from the
+reconnect-token/host-state mechanisms above; `session.ts` just gets the app to attempt
+it instead of stopping at landing. `saveLastName`/`loadLastName` in the same module is
+an unrelated, simpler bit of persistence (just the last-typed display name, to
+pre-fill `join-setup`'s name field next time).
+
+`src/utils/connection-watchdog.ts`'s `watchForStaleConnection(onStale)` addresses a
+different, harder problem: a device that's been backgrounded (tab hidden / phone
+locked) for a while can end up with a silently-dead WebRTC/signaling connection — the
+Storyteller thinks they're connected, but Players in the room can't see them, and new
+joiners can't either. There's no reliable way to distinguish "genuinely dead" from
+"just slow" through Trystero's public API, so rather than attempting a risky in-place
+reconnect (untested, and `selfId` reappearing under a new `joinRoom()` call while
+peers still hold the old one is unclear behavior), this detects the likely trigger —
+hidden for more than 15 seconds — via the Page Visibility API and does a full
+`location.reload()`, which is guaranteed to recover correctly because it's the exact
+scenario the reconnect-token/host-state mechanisms already handle. Both
+`host-room/index.ts` and `join-room/index.ts` wire this to `() =>
+location.reload()`. The 15-second threshold is an untested guess — revisit it once
+there's a real report to calibrate against.
 
 ## Shared modal system + the seat popup's callback design
 
 `ui/modal.ts` is a single shared overlay slot (`openModal(content, className,
-onBackdropDismiss?)` / `closeModal()`) used by the character popup, the character
-grid picker, the Grimoire's seat popup, and the Setup modal — only one is ever open at
-a time, and opening a new one silently closes whatever was already open (e.g. the
-character picker opening on top of the seat popup). `onBackdropDismiss` fires **only**
-when the user clicks the backdrop itself, deliberately not on every `closeModal()`
-call — most `closeModal()` calls in this codebase are a modal closing itself just to
-open a *different* one, and that must not be confused with the user dismissing the
-whole interaction.
+onBackdropDismiss?)` / `updateModalContent(content)` / `closeModal()`) used by the
+character popup, the character grid picker, the Grimoire's seat popup, the Setup
+modal, the Lobby modal, and the Town Square seat/player-picker popups — only one is
+ever open at a time, and opening a new one silently closes whatever was already open
+(e.g. the character picker opening on top of the seat popup). `onBackdropDismiss`
+fires **only** when the user clicks the backdrop itself, deliberately not on every
+`closeModal()` call — most `closeModal()` calls in this codebase are a modal closing
+itself just to open a *different* one, and that must not be confused with the user
+dismissing the whole interaction.
+
+**`updateModalContent` vs. `openModal` — this one shipped broken too:** anything that
+re-renders in response to its own interactions (a composer button click, a Setup
+checkbox toggle, a prediction change) must call `updateModalContent(freshContent)`
+first and only fall back to `openModal(...)` if that returns `false` (no modal
+currently open). Calling `openModal` unconditionally on every such refresh — which is
+what shipped first — destroys and recreates the overlay `<div>` every time, and since
+the overlay itself (not its content) is what carries `scrollTop`, that silently reset
+scroll to the top on every single click. `updateModalContent` swaps the content of the
+*same* overlay element in place, so its scroll position survives. Every "just
+refresh what's already open" call site in `grimoire-panel.ts`, `seat-modal.ts`,
+`setup-modal.ts`, `town-square-panel.ts`, and `lobby-modal.ts` follows this pattern —
+don't add a new one that skips straight to `openModal`.
 
 This distinction matters concretely in `screens/host-room/grimoire-panel.ts` +
 `seat-modal.ts`, which is the trickiest state-management corner of the app. The
@@ -319,25 +375,26 @@ src/
     room-code.ts                   # generateRoomCode() (unambiguous alphabet), normalizeRoomCode()
     reconnect-token.ts              # getOrCreatePlayerToken() — see "Seats, reconnect" above
     host-persistence.ts             # save/load/clearHostState() — see "Seats, reconnect" above
+    session.ts                      # saveLastSession()/loadLastSession()/clearLastSession() +
+                                     # saveLastName()/loadLastName() — see "Seats, reconnect" above
+    connection-watchdog.ts           # watchForStaleConnection() — see "Seats, reconnect" above
   ui/
     dom.ts                          # el() helper (typed document.createElement + prop assign)
     tabs.ts                         # renderTabs() — shared bottom tab-bar shell; supports a
                                      # per-tab unread badge (setBadge)
-    modal.ts                         # openModal()/closeModal() — shared single-overlay-slot
-                                      # dialog primitive, see "Shared modal system" above
-    roster-panel.ts                  # renderRosterPanel() — read-only (Player's "Players in
-                                      # this room" list only; the ST no longer has a selectable
-                                      # variant — clicking a seat in the Grimoire replaced it);
-                                      # optional showStatus renders shroud/vote-token icons
+    modal.ts                         # openModal()/updateModalContent()/closeModal() — shared
+                                      # single-overlay-slot dialog primitive, see "Shared modal
+                                      # system" above
+    token-image.ts                   # renderTokenImage() — always wraps an <img> (or placeholder
+                                      # initial) in a container div; needed because a death-shroud
+                                      # ::after overlay doesn't render on a bare <img> in any browser
     circular-layout.ts                # layoutInCircle() — positions a container's children
                                        # evenly around a circle (Grimoire + Town Square seating);
                                        # container must be square (aspect-ratio: 1)
     qr-code.ts                        # renderQrCode(url) via qrcode-generator
     character-popup.ts                 # openCharacterPopup(), attachCharacterTrigger() — full
                                         # modal + desktop hover tooltip, used everywhere a
-                                        # character appears; also exports the small
-                                        # .character-chip-token icon markup reused by
-                                        # night-actions-panel.ts's rendered card elements
+                                        # character appears
     character-picker.ts                 # openCharacterPicker() — single-click character grid
                                          # popup (character assign, night-card element, Town
                                          # Square prediction). NOT shared with Setup's own grid
@@ -347,45 +404,59 @@ src/
                                          # the 5-15+ player distribution table) used by both
                                          # roles' Script panels
   screens/
-    landing.ts, host-setup.ts, join-setup.ts     # unchanged single-screen flows
+    landing.ts, host-setup.ts, join-setup.ts     # unchanged single-screen flows (join-setup.ts
+                                                  # now also pre-fills the name field from
+                                                  # utils/session.ts's loadLastName())
     host-room/
-      index.ts                          # creates the HostRoomHandle, room header (QR toggle,
-                                          # leave), the persistent per-seat message-log
-                                          # subscription (see "Messages and night cards are
-                                          # unified" below), and the tab shell (Grimoire/Script —
-                                          # no separate Seats or Messages tab; both folded into
-                                          # the Grimoire's seat popup)
-      grimoire-panel.ts                   # seat circle (layoutInCircle), night-order sidebar
-                                           # (two-column on wide screens), audit log, notes;
-                                           # owns activeSeat/composerElements/pickingPlayer state
-                                           # and opens seat-modal.ts's content into ui/modal.ts
-      seat-modal.ts                        # buildSeatModalContent() — per-seat popup: rename/
-                                            # remove/alive/vote/character-assign, vacant-seat
-                                            # "assign a connected player" list, a per-seat message
-                                            # log + quick-send box, and the night card composer
-                                            # (quick element buttons + autofill preset cards +
-                                            # "Player"-picking flow)
+      index.ts                          # creates the HostRoomHandle, compact room header (QR
+                                          # toggle, leave), the persistent per-seat message map
+                                          # (see "Messages and night cards are unified" below),
+                                          # session-persistence + connection-watchdog wiring, and
+                                          # the tab shell (Grimoire/Script — no separate Seats or
+                                          # Messages tab; both folded into the Grimoire's seat popup)
+      grimoire-panel.ts                   # seat circle (layoutInCircle), a "Lobby" button
+                                           # (lobby-modal.ts), night-order sidebar (two-column on
+                                           # wide screens), audit log, general notes below the
+                                           # fold; owns activeSeat/composerElements/pickingPlayer
+                                           # state and opens seat-modal.ts's content into ui/modal.ts
+      seat-modal.ts                        # buildSeatModalContent() — per-seat popup, now a
+                                            # two-column layout (game state left, messages + night
+                                            # card composer right) on wide screens: rename/remove/
+                                            # alive/vote/character-assign, vacant-seat "assign a
+                                            # connected player" list, a private per-seat reminder
+                                            # note, a per-seat message log + quick-send box, and the
+                                            # night card composer (quick element buttons + autofill
+                                            # preset cards + "Player"-picking flow)
       setup-modal.ts                        # openSetupModal() — manual character-pool picker
                                              # (toggle which characters are in play, checked
                                              # against the suggested distribution) + "randomize
                                              # seat assignment" for the chosen pool only
+      lobby-modal.ts                         # openLobbyModal() — Storyteller-only overview of
+                                              # every connected device, seated or not; the ST-side
+                                              # equivalent of the roster list Players no longer see
       script-panel.ts                       # script <select> (currently one option) + renderScriptView
     join-room/
-      index.ts                          # creates the PlayerRoomHandle, room header, shared
-                                          # roster panel, shared cross-tab state (the unified
-                                          # message/card feed, own character, latest roster), and
+      index.ts                          # creates the PlayerRoomHandle, compact room header
+                                          # (display name inline), shared cross-tab state (the
+                                          # unified feed, own character, latest roster),
+                                          # session-persistence + connection-watchdog wiring, and
                                           # the tab shell (Night Actions/Town Square/Script — no
-                                          # separate Messages tab, folded into Night Actions)
+                                          # top-level roster list, no separate Messages tab)
       night-actions-panel.ts               # own character + ability, the unified feed (see
                                             # "Messages and night cards are unified" below), a
-                                            # "Got it" + custom-text send composer, and reply
-                                            # controls for choose-prompts
-      town-square-panel.ts                  # seat circle (layoutInCircle); tapping a seat opens
-                                             # a popup (ui/modal.ts) with status, a prediction
-                                             # picker (via character-picker.ts), and notes —
-                                             # mirrors the Grimoire's "click a seat" pattern.
-                                             # Subscribes to onRosterChange itself (live-updates
-                                             # while mounted, not just at mount time)
+                                            # queueable composer ("Got it" / "Player" via
+                                            # openPlayerPicker / custom text, all addable before one
+                                            # Send, mirroring the Storyteller's own composer), and
+                                            # reply controls for choose-prompts
+      town-square-panel.ts                  # seat circle (layoutInCircle); tapping a seat opens a
+                                             # popup (ui/modal.ts) with status, a prediction picker
+                                             # (via character-picker.ts), and notes — mirrors the
+                                             # Grimoire's "click a seat" pattern. Also exports
+                                             # openPlayerPicker() (a read-only variant of the same
+                                             # circle, used by night-actions-panel.ts's "Player"
+                                             # composer button). Subscribes to onRosterChange
+                                             # itself (live-updates while mounted, not just at
+                                             # mount time)
       script-panel.ts                        # read-only renderScriptView wrapper; also
                                               # subscribes to onRosterChange in case the
                                               # Storyteller changes the script mid-game
@@ -402,33 +473,52 @@ is reserved for rare, user-initiated screen transitions only.
 ## Messages and night cards are unified (no separate "Messages" tab)
 
 A plain text message and a structured night card are now the same concept, displayed
-through the same feed on both sides — there is no standalone "Messages" tab anywhere
-in the app anymore (the original `screens/*/messages-panel.ts` and `ui/message-log.ts`
-are deleted).
+through the same feed/log on both sides — there is no standalone "Messages" tab
+anywhere in the app anymore (the original `screens/*/messages-panel.ts` and
+`ui/message-log.ts` are deleted, and so is the Player-outgoing half of the old
+`secretMessage`-based path — see below).
 
 - **Player side** (`night-actions-panel.ts`): `FeedEntry = {ts, self, elements:
   NightCardElement[]}`. A plain message (either direction) is represented as a card
   with exactly one `text` element — built via the same `nightCardElement()` helper as
   everything else, so `renderElement()` renders both received night cards and plain
-  messages through identical code. The "Got it" button and custom-text box just call
-  `send([nightCardElement('text', {text})])`, which both calls `handle.
-  sendToStoryteller()` (still the plain `secretMessage` action over the wire — the
-  unification is a *display-layer* concept, not a new wire protocol) and pushes a
-  `self: true` entry onto the shared feed for immediate display.
+  messages through identical code. The composer is **queued**, matching the
+  Storyteller's own composer exactly: "Got it," "Player" (opens
+  `town-square-panel.ts`'s `openPlayerPicker()` so the Player picks with the same
+  context — status, their own predictions — visible, rather than a bare list), and
+  custom text all push onto a local `pendingElements` array with a visible
+  remove-able preview (`describeNightCardElement`), and a single "Send" flushes the
+  whole queue via `handle.sendPlayerCard(pendingElements)` — a real structured card
+  over the wire, not text squashed into one string. The Storyteller's per-card choose-
+  prompt replies still go over the separate `respondToNightCard`/`nightActionResponse`
+  action, tied to a specific card's `forTs` — that mechanism is unchanged.
 - **Storyteller side** (`seat-modal.ts`'s `buildMessageLog()`): scoped per-seat rather
   than a single global list, since a seat's popup is already "everything about this
-  player" — a simple two-way `SeatMessage{ts, self, text}` log plus a quick-send input,
-  living alongside (not replacing) the structured night-card composer in the same
-  popup. Sent night *cards* remain tracked separately in the global, ST-only audit log
-  (`grimoire-panel.ts`) — the per-seat message log is only plain text exchange.
+  player." `SeatMessage = {ts, self, elements: NightCardElement[]}` — the *same shape*
+  as the Player's `FeedEntry`, rendered as a joined `describeNightCardElement(...)`
+  summary per entry (a compact one-line log, not the Player's richer per-element
+  rendering). Two things feed this log: the Storyteller's own quick-send box (still
+  wire-compatible plain text via `handle.sendToPlayer`/`secretMessage`, wrapped as a
+  single-`text`-element `SeatMessage` for display), and incoming `onPlayerCard` events
+  (the Player's queued sends, arriving with their full element list intact). Sent
+  night *cards* (via `sendNightCard`) remain tracked separately in the global, ST-only
+  audit log (`grimoire-panel.ts`) — not duplicated into the per-seat log.
+- **The old Player → Storyteller `secretMessage`/`sendToStoryteller` path is gone, not
+  just unused.** Since `playerCard` fully supersedes it, `PlayerRoomHandle.
+  sendToStoryteller` and `HostRoomHandle.onPlayerMessage` (plus the Storyteller's
+  `secretMessage.onMessage` handler and its `messageListeners` Set) were deleted
+  rather than left as dead code — `secretMessage` now only flows Storyteller → Player
+  (`sendToPlayer`/`onStorytellerMessage`), and nothing in this codebase calls
+  `secretMessage.send` from the Player side anymore. If you're looking for where
+  Players used to send free-form text, that's `sendPlayerCard` now.
 - The `messagesBySeat: Map<seat, SeatMessage[]>` map lives in `host-room/index.ts`
-  (persistent for the room's lifetime) for the same reason the message/card feed does
-  on the Player side and the listener Sets exist at all: `grimoire-panel.ts` is torn
-  down and recreated every time its tab is (re)activated, so if the map lived there
-  instead, a message arriving while the Storyteller was on the Script tab would be
-  lost. `grimoire-panel.ts` registers its *own* `onPlayerMessage` too, but only to
-  decide whether to live-refresh an already-open seat popup — it must not also push
-  into the map, or messages would double up.
+  (persistent for the room's lifetime), populated by a single top-level `onPlayerCard`
+  subscription there — for the same reason the Player-side feed and the listener Sets
+  exist at all: `grimoire-panel.ts` is torn down and recreated every time its tab is
+  (re)activated, so if the map were populated there instead, a card arriving while the
+  Storyteller was on the Script tab would be lost. `grimoire-panel.ts` registers its
+  *own* `onPlayerCard` too, but only to decide whether to live-refresh an already-open
+  seat popup — it must not also push into the map, or entries would double up.
 
 ## Known accepted limitations
 
@@ -480,6 +570,16 @@ are deleted).
   chain down to whichever element should scroll, content can get silently clipped
   instead of scrolling — this is a real footgun of the fixed-shell approach, worth
   checking whenever a new panel is added.
+- The connection watchdog's "hidden for 15+ seconds → reload" heuristic is a guess,
+  not something verified against a real stale-connection repro — it may need a
+  different threshold, or a different signal entirely, once there's real evidence of
+  what actually triggers the reported symptom.
+- The auto-rejoin-on-reload session (`utils/session.ts`) doesn't verify the room still
+  exists before navigating back to it — if the Storyteller's room is truly gone (they
+  clicked "Leave Room" is the one case this already handles, but e.g. clearing browser
+  data wouldn't), a Player would just land on a room screen with an empty/stale roster
+  rather than being told "this room doesn't exist." No worse than manually re-joining
+  a dead code would have been, just not actively detected either.
 
 ## Running locally / testing
 
@@ -536,3 +636,29 @@ are deleted).
     unrelated update (e.g. another device connecting) → the popup must NOT reopen by
     itself (this is the activeSeat/onDismiss bug described in "Shared modal system"
     above — regression-test it specifically).
+  - Add several elements in a seat's night-card composer (or Setup's character grid,
+    or the Player's own composer), clicking around between additions → scroll
+    position inside the modal must NOT jump back to the top on each click (this is
+    the updateModalContent-vs-openModal bug — regression-test it specifically, since
+    it's easy to reintroduce by routing a new "just refresh" call through `openModal`).
+  - A dead seat's token should show a visibly shrouded/desaturated circle over the
+    token image itself (not a gravestone emoji next to the name) — check both the
+    Grimoire and Town Square circles.
+  - Storyteller: click "Lobby" → seated and not-yet-seated connections both show, and
+    the list updates live while the modal stays open (join a new device while it's open).
+  - Storyteller: set a private per-seat reminder note in a seat's popup → it should
+    persist across a Storyteller reload and never appear on the Player's own screen.
+  - Player: from Night Actions, tap "Player" → Town Square's circle should open as a
+    picker (not a bare list); picking a seat should add it to the pending queue, which
+    should support adding several elements (including another "Player") before Send,
+    matching the Storyteller composer's queue-then-send pattern.
+  - Reload the Player's or Storyteller's tab (without clicking "Leave Room" first) →
+    the app should land back in the same room, not on the landing screen; clicking
+    "Leave Room" first and then reloading (or reopening the app fresh) should NOT
+    auto-rejoin.
+  - Background a tab (switch away / lock the screen) for 20+ seconds, then bring it
+    back to the foreground → expect a full page reload to have happened automatically
+    and the room to be rejoined correctly afterward.
+  - Seat modal and character/Setup pickers should visibly use much more of a wide
+    desktop window than before — the seat popup specifically should show game state
+    and the night-card composer side by side on a wide screen, stacked on a narrow one.

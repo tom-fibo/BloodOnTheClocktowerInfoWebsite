@@ -5,7 +5,7 @@ import { getCharacter } from '../../data/characters'
 import { getScript } from '../../data/scripts'
 import { openCharacterPicker } from '../../ui/character-picker'
 import { openCharacterPopup } from '../../ui/character-popup'
-import { nightCardElement } from '../../game/night-card'
+import { nightCardElement, describeNightCardElement } from '../../game/night-card'
 import { shuffle } from '../../game/setup'
 import type { NightCardElement, PlayerInfo } from '../../types'
 
@@ -27,13 +27,17 @@ export interface SeatModalCallbacks {
 }
 
 // Messages and night cards are the same concept from the Storyteller's side
-// too — this is a simple two-way text log scoped to one seat, replacing the
-// old standalone "Messages" tab. Sent night cards themselves are tracked
-// separately in the private audit log (grimoire-panel.ts), not duplicated here.
+// too — this is a simple two-way log scoped to one seat, replacing the old
+// standalone "Messages" tab. Same shape as the Player's own feed (see
+// night-actions-panel.ts's FeedEntry) so both sides describe an exchange the
+// same way. Sent night *cards* themselves are tracked separately in the
+// private audit log (grimoire-panel.ts), not duplicated here — this only
+// covers plain quick-messages (self: true) and unprompted Player cards
+// (self: false, via onPlayerCard).
 export interface SeatMessage {
   ts: number
   self: boolean
-  text: string
+  elements: NightCardElement[]
 }
 
 function seatsWithCharacters(handle: HostRoomHandle): { seat: PlayerInfo; characterId: string }[] {
@@ -51,25 +55,6 @@ function elementButton(label: string, onclick: () => void): HTMLButtonElement {
   return el('button', { className: 'element-quick-button', textContent: label, onclick })
 }
 
-function describeElement(element: NightCardElement): string {
-  switch (element.kind) {
-    case 'text':
-      return element.text ?? ''
-    case 'number':
-      return `Number: ${element.value}`
-    case 'player':
-      return `Player: ${element.name}`
-    case 'character':
-      return `Character: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
-    case 'characterChange':
-      return `You are: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
-    case 'choosePlayer':
-      return `[Choose a player] ${element.prompt}`
-    case 'chooseCharacter':
-      return `[Choose a character] ${element.prompt}`
-  }
-}
-
 function buildComposer(
   handle: HostRoomHandle,
   seat: PlayerInfo,
@@ -83,7 +68,7 @@ function buildComposer(
     { className: 'composer-element-list' },
     composerElements.map((element, index) =>
       el('li', {}, [
-        el('span', { textContent: describeElement(element) }),
+        el('span', { textContent: describeNightCardElement(element) }),
         el('button', {
           className: 'remove-element-button',
           textContent: '✕',
@@ -243,7 +228,10 @@ function buildMessageLog(
           el('li', {}, [
             el('span', { className: 'audit-log-time', textContent: new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }),
             el('span', { className: 'audit-log-seat', textContent: msg.self ? 'You' : seat.name }),
-            el('span', { className: 'audit-log-summary', textContent: msg.text }),
+            el('span', {
+              className: 'audit-log-summary',
+              textContent: msg.elements.map(describeNightCardElement).join(' · '),
+            }),
           ]),
         )
       : [el('li', { className: 'roster-empty', textContent: 'No messages yet.' })],
@@ -254,7 +242,7 @@ function buildMessageLog(
     const text = input.value.trim()
     if (!text || !seat.peerId) return
     handle.sendToPlayer(seat.peerId, text)
-    messageLog.push({ ts: Date.now(), self: true, text })
+    messageLog.push({ ts: Date.now(), self: true, elements: [nightCardElement('text', { text })] })
     input.value = ''
     callbacks.onComposerChange()
   }
@@ -343,15 +331,17 @@ export function buildSeatModalContent(
         ])
       : el('div')
 
-  return el('div', { className: 'seat-modal-card' }, [
-    el('button', {
-      className: 'character-popup-close',
-      textContent: '✕',
-      onclick: () => {
-        closeModal()
-        callbacks.onDismiss()
-      },
-    }),
+  // Private, Storyteller-only reminder (e.g. "protected by Monk") — distinct
+  // from the general notes textarea, and never sent to the player.
+  const seatNoteInput = el('textarea', {
+    className: 'seat-private-note-input',
+    rows: 2,
+    placeholder: 'Private reminder (e.g. "protected by Monk")…',
+    value: handle.getSeatNote(seat.seat),
+  })
+  seatNoteInput.addEventListener('input', () => handle.setSeatNote(seat.seat, seatNoteInput.value))
+
+  const leftColumn = el('div', { className: 'seat-modal-left' }, [
     el('div', { className: 'seat-detail-header' }, [
       nameInput,
       el('button', {
@@ -375,7 +365,26 @@ export function buildSeatModalContent(
       el('label', {}, [voteCheckbox, ' Has vote token']),
     ]),
     characterRow,
+    el('label', { textContent: 'Private reminder:' }),
+    seatNoteInput,
     seat.peerId !== null ? buildMessageLog(handle, seat, messageLog, callbacks) : el('div'),
-    seat.peerId !== null ? buildComposer(handle, seat, composerElements, callbacks) : el('div'),
+  ])
+
+  const rightColumn = el('div', { className: 'seat-modal-right' }, [
+    seat.peerId !== null
+      ? buildComposer(handle, seat, composerElements, callbacks)
+      : el('p', { className: 'roster-empty', textContent: 'Night cards can be sent once a player is connected to this seat.' }),
+  ])
+
+  return el('div', { className: 'seat-modal-card' }, [
+    el('button', {
+      className: 'character-popup-close',
+      textContent: '✕',
+      onclick: () => {
+        closeModal()
+        callbacks.onDismiss()
+      },
+    }),
+    el('div', { className: 'seat-modal-columns' }, [leftColumn, rightColumn]),
   ])
 }

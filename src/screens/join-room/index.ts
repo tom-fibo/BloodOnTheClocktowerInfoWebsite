@@ -1,10 +1,11 @@
 import { el } from '../../ui/dom'
 import { getState, setState } from '../../state/store'
 import { joinPlayerRoom } from '../../trystero/room'
-import { renderRosterPanel } from '../../ui/roster-panel'
 import { renderTabs } from '../../ui/tabs'
 import { DEFAULT_SCRIPT_ID } from '../../data/scripts'
 import { nightCardElement } from '../../game/night-card'
+import { saveLastSession, clearLastSession, saveLastName } from '../../utils/session'
+import { watchForStaleConnection } from '../../utils/connection-watchdog'
 import type { PlayerInfo } from '../../types'
 import { renderNightActionsPanel, type FeedEntry } from './night-actions-panel'
 import { renderTownSquarePanel } from './town-square-panel'
@@ -13,6 +14,7 @@ import { renderScriptPanel } from './script-panel'
 export function renderJoinRoom(container: HTMLElement): void {
   const { roomCode, selfName } = getState()
   const handle = joinPlayerRoom(roomCode, selfName)
+  saveLastSession({ screen: 'join-room', roomCode, selfName })
 
   // Shared, mutable, and kept alive for the whole room session (unlike the
   // per-tab panels, which are torn down and recreated on every tab switch) —
@@ -22,8 +24,7 @@ export function renderJoinRoom(container: HTMLElement): void {
   const nightActionsState = { myCharacterId: null as string | null, feed, latestRoster: [] as PlayerInfo[] }
   const townSquareState = { latestRoster: [] as PlayerInfo[], scriptId: DEFAULT_SCRIPT_ID }
 
-  const rosterContainer = el('div', { className: 'roster-panel' })
-  const nameInput = el('input', { className: 'name-input', value: selfName, maxLength: 20 })
+  const nameInput = el('input', { className: 'name-input-inline', value: selfName, maxLength: 20 })
   const banner = el('p', {
     className: 'disconnect-banner hidden',
     textContent: 'Storyteller disconnected — waiting to reconnect…',
@@ -32,18 +33,18 @@ export function renderJoinRoom(container: HTMLElement): void {
   container.replaceChildren(
     el('div', { className: 'screen join-room-screen' }, [
       el('div', { className: 'room-header' }, [
-        el('div', {}, [el('h1', { textContent: 'Player' }), el('label', { textContent: 'Display name:' }), nameInput]),
+        el('div', { className: 'room-header-title' }, [el('h1', { textContent: 'Player' }), nameInput]),
         el('button', {
           className: 'leave-button',
           textContent: 'Leave Room',
           onclick: () => {
             handle.leave()
+            clearLastSession()
             setState({ screen: 'landing' })
           },
         }),
       ]),
       banner,
-      el('div', { className: 'roster-panel-container' }, [el('h2', { textContent: 'Players in this room' }), rosterContainer]),
       el('div', { className: 'tabs-shell' }),
     ]),
   )
@@ -59,7 +60,6 @@ export function renderJoinRoom(container: HTMLElement): void {
     nightActionsState.latestRoster = players
     townSquareState.latestRoster = players
     townSquareState.scriptId = scriptId
-    renderRosterPanel(rosterContainer, players, { showStatus: true })
     banner.classList.add('hidden')
   })
 
@@ -83,6 +83,12 @@ export function renderJoinRoom(container: HTMLElement): void {
 
   nameInput.addEventListener('change', () => {
     const name = nameInput.value.trim()
-    if (name) handle.updateName(name)
+    if (name) {
+      handle.updateName(name)
+      saveLastName(name)
+      saveLastSession({ screen: 'join-room', roomCode, selfName: name })
+    }
   })
+
+  watchForStaleConnection(() => location.reload())
 }

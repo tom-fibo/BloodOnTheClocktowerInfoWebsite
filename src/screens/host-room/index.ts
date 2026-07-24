@@ -3,6 +3,8 @@ import { getState, setState } from '../../state/store'
 import { createHostRoom } from '../../trystero/room'
 import { renderTabs } from '../../ui/tabs'
 import { renderQrCode } from '../../ui/qr-code'
+import { saveLastSession, clearLastSession } from '../../utils/session'
+import { watchForStaleConnection } from '../../utils/connection-watchdog'
 import { renderGrimoirePanel } from './grimoire-panel'
 import { renderScriptPanel } from './script-panel'
 import type { SeatMessage } from './seat-modal'
@@ -10,6 +12,7 @@ import type { SeatMessage } from './seat-modal'
 export function renderHostRoom(container: HTMLElement): void {
   const { roomCode } = getState()
   const handle = createHostRoom(roomCode)
+  saveLastSession({ screen: 'host-room', roomCode, selfName: '' })
 
   // Shared across tab activations so switching tabs never loses history —
   // see the comment on the listener Sets in trystero/room.ts for why a plain
@@ -18,28 +21,25 @@ export function renderHostRoom(container: HTMLElement): void {
   // is scoped per-seat and lives inside the Grimoire's seat popup, not a
   // separate "Messages" tab.
   const messagesBySeat = new Map<number, SeatMessage[]>()
-  handle.onPlayerMessage((msg) => {
-    const seatEntry = handle.getSeats().find((s) => s.peerId === msg.peerId)
-    if (!seatEntry) return
-    const log = messagesBySeat.get(seatEntry.seat) ?? []
-    log.push({ ts: msg.ts, self: false, text: msg.text })
-    messagesBySeat.set(seatEntry.seat, log)
+  handle.onPlayerCard((card) => {
+    const log = messagesBySeat.get(card.seat) ?? []
+    log.push({ ts: card.ts, self: false, elements: card.elements })
+    messagesBySeat.set(card.seat, log)
   })
 
   const joinUrl = `${location.origin}${location.pathname}?join=${roomCode}`
-  const qrToggle = el('button', { className: 'secondary qr-toggle-button', textContent: 'Show join QR code' })
+  const qrToggle = el('button', { className: 'secondary qr-toggle-button', textContent: 'QR' })
   const qrContainer = el('div', { className: 'qr-container hidden' }, [renderQrCode(joinUrl)])
   qrToggle.addEventListener('click', () => {
     qrContainer.classList.toggle('hidden')
-    qrToggle.textContent = qrContainer.classList.contains('hidden') ? 'Show join QR code' : 'Hide join QR code'
   })
 
   container.replaceChildren(
     el('div', { className: 'screen host-room-screen' }, [
       el('div', { className: 'room-header' }, [
-        el('div', {}, [
+        el('div', { className: 'room-header-title' }, [
           el('h1', { textContent: 'Storyteller' }),
-          el('p', { className: 'room-code-display', textContent: `Room code: ${roomCode}` }),
+          el('span', { className: 'room-code-display', textContent: `Room code: ${roomCode}` }),
         ]),
         el('div', { className: 'room-header-actions' }, [
           qrToggle,
@@ -48,6 +48,7 @@ export function renderHostRoom(container: HTMLElement): void {
             textContent: 'Leave Room',
             onclick: () => {
               handle.leave()
+              clearLastSession()
               setState({ screen: 'landing' })
             },
           }),
@@ -63,4 +64,6 @@ export function renderHostRoom(container: HTMLElement): void {
     { id: 'grimoire', label: 'Grimoire', render: (c) => renderGrimoirePanel(c, handle, messagesBySeat) },
     { id: 'script', label: 'Script', render: (c) => renderScriptPanel(c, handle) },
   ])
+
+  watchForStaleConnection(() => location.reload())
 }

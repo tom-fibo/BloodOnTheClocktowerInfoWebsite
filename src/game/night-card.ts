@@ -1,3 +1,4 @@
+import { getCharacter } from '../data/characters'
 import type { NightCardElement, NightCardElementKind } from '../types'
 
 // Kept separate from NightCardElement itself (rather than `Partial<Omit<NightCardElement, 'kind'>>`)
@@ -27,5 +28,27 @@ export function nightCardElement(kind: NightCardElementKind, fields: NightCardEl
     characterId: fields.characterId ?? null,
     prompt: fields.prompt ?? null,
     characterIds: fields.characterIds ?? null,
+  }
+}
+
+// Short one-line preview of an element, for a composer's pending-list-before-
+// sending (either side) and the Storyteller's audit/message logs. Shared here
+// rather than duplicated per screen.
+export function describeNightCardElement(element: NightCardElement): string {
+  switch (element.kind) {
+    case 'text':
+      return element.text ?? ''
+    case 'number':
+      return `Number: ${element.value}`
+    case 'player':
+      return `Player: ${element.name}`
+    case 'character':
+      return `Character: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
+    case 'characterChange':
+      return `You are: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
+    case 'choosePlayer':
+      return `[Choose a player] ${element.prompt}`
+    case 'chooseCharacter':
+      return `[Choose a character] ${element.prompt}`
   }
 }

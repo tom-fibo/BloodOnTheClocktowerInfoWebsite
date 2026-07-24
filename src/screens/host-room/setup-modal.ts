@@ -1,5 +1,5 @@
 import { el } from '../../ui/dom'
-import { openModal, closeModal } from '../../ui/modal'
+import { openModal, updateModalContent, closeModal } from '../../ui/modal'
 import type { HostRoomHandle } from '../../trystero/room'
 import { getScript } from '../../data/scripts'
 import { getCharacter } from '../../data/characters'
@@ -91,7 +91,11 @@ export function openSetupModal(handle: HostRoomHandle, onAssigned: () => void): 
       ...groups,
     ])
 
-    openModal(content, 'character-picker-overlay')
+    // Update in place so toggling a character doesn't reset scroll to the top
+    // (see ui/modal.ts's updateModalContent doc comment).
+    if (!updateModalContent(content)) {
+      openModal(content, 'character-picker-overlay')
+    }
   }
 
   rebuild()

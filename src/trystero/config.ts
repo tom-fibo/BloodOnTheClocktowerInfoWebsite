@@ -7,4 +7,5 @@ export const ACTIONS = {
   CHARACTER_ASSIGN: 'characterAssign',
   NIGHT_CARD: 'nightCard',
   NIGHT_ACTION_RESPONSE: 'nightActionResponse',
+  PLAYER_CARD: 'playerCard',
 } as const

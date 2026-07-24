@@ -150,41 +150,43 @@ button.leave-button {
 .room-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  padding-bottom: 1rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
+}
+
+.room-header-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.room-header-title h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.name-input-inline {
+  width: auto;
+  min-width: 8rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.9rem;
 }
 
 .room-code-display {
   color: var(--text-muted);
   font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
   margin: 0;
 }
 
-.roster-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.roster-item {
-  padding: 0.6rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.roster-item.selectable {
-  cursor: pointer;
-}
-
-.roster-item.selected {
-  border-color: var(--accent);
-  background: var(--bg-alt);
+.room-header-actions button {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
 }
 
 .roster-empty {
@@ -277,11 +279,7 @@ button.danger {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
-  align-items: flex-start;
-}
-
-.roster-panel-container {
-  margin-top: 1rem;
+  align-items: center;
 }
 
 /* QR join code */
@@ -311,44 +309,7 @@ button.danger {
   border-radius: 4px;
 }
 
-/* Roster item extras: seat status, shroud, disconnected */
-
-.roster-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.roster-item.dead {
-  opacity: 0.7;
-}
-
-.roster-item.disconnected {
-  opacity: 0.55;
-}
-
-.disconnected-label {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-.shroud-icon,
-.vote-token-icon {
-  font-size: 0.9rem;
-}
-
 /* Grimoire */
-
-.grimoire-pinned-note {
-  background: var(--bg-alt);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  font-weight: 600;
-  margin: 0 0 1rem;
-}
 
 /* Seats arranged in a circle, matching the physical Town Square — see
    ui/circular-layout.ts, which positions each .seat-token child absolutely
@@ -361,7 +322,7 @@ button.danger {
   width: 100%;
   max-width: min(100%, 78vh, 760px);
   aspect-ratio: 1 / 1;
-  margin: 0.5rem auto 1.5rem;
+  margin: 0.25rem auto;
   flex-shrink: 0;
 }
 
@@ -382,10 +343,6 @@ button.danger {
   border-color: var(--accent);
 }
 
-.seat-token.dead {
-  opacity: 0.6;
-}
-
 .seat-token.disconnected {
   border-style: dashed;
 }
@@ -395,20 +352,41 @@ button.danger {
   box-shadow: 0 0 0 3px var(--accent);
 }
 
+/* ui/token-image.ts always wraps the image (or placeholder initial) in this
+   div, never a bare <img> — a death shroud needs generated content (::after),
+   which doesn't render on replaced elements like <img> in any browser. */
 .seat-token-image {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  object-fit: cover;
-  background: var(--bg);
-}
-
-.seat-token-image.placeholder {
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--bg);
   color: var(--text-muted);
   font-weight: 600;
+}
+
+.seat-token-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Death shroud (matching the official app) rather than a gravestone icon:
+   desaturate/darken the token and drape a translucent grey gradient over it. */
+.seat-token.dead .seat-token-image {
+  filter: grayscale(70%) brightness(0.6);
+}
+
+.seat-token.dead .seat-token-image::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(160deg, rgba(220, 220, 220, 0.05) 0%, rgba(190, 190, 190, 0.35) 45%, rgba(120, 120, 120, 0.6) 100%);
 }
 
 .seat-token-name {
@@ -497,11 +475,19 @@ button.danger {
   margin-top: 0.5rem;
 }
 
+/* Notes and sent-card history scroll on their own rather than competing with
+   the circle above for space — the circle should always be fully visible. */
+.grimoire-below-fold {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .grimoire-audit-log,
 .grimoire-notes {
-  margin-top: 1.5rem;
+  margin-top: 1rem;
   border-top: 1px solid var(--border);
-  padding-top: 1rem;
+  padding-top: 0.75rem;
 }
 
 .grimoire-tokens-header {
@@ -510,6 +496,7 @@ button.danger {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem;
+  margin-bottom: 0.25rem;
 }
 
 .picking-banner {
@@ -591,15 +578,19 @@ button.danger {
 .grimoire-layout {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1rem;
   flex: 1;
   min-height: 0;
 }
 
+/* Flex column so the circle (fixed-size, via .seat-circle's flex-shrink: 0)
+   is always fully shown, and only .grimoire-below-fold scrolls if it doesn't
+   all fit — never the circle itself. */
 .grimoire-main {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
 }
 
 .grimoire-sidebar {
@@ -639,6 +630,12 @@ button.danger {
   margin-top: 0.5rem;
 }
 
+/* Private, Storyteller-only per-seat reminder (e.g. "protected by Monk") */
+.seat-private-note-input {
+  margin-top: 0.3rem;
+  border-color: var(--accent);
+}
+
 /* Per-seat message log (folded into the seat popup — see seat-modal.ts) */
 
 .seat-messages {
@@ -649,6 +646,30 @@ button.danger {
 
 .seat-message-log {
   max-height: 20vh;
+}
+
+/* Lobby modal (Storyteller-only "who's connected" overview) */
+
+.lobby-list {
+  list-style: none;
+  margin: 0.4rem 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.lobby-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.lobby-list li.disconnected {
+  opacity: 0.6;
 }
 
 /* Composer: preset autofill cards + single-click element buttons */
@@ -698,16 +719,44 @@ button.danger {
   overflow-y: auto;
 }
 
+/* Wide, not a fixed narrow dialog width — the Storyteller is assumed to be on
+   a computer with a wide screen, so these should use as much of it as is
+   reasonable rather than a cramped centered column. */
 .seat-modal-card {
   position: relative;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1.5rem;
-  max-width: 480px;
+  max-width: min(96vw, 1100px);
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
+}
+
+/* Game state (left) + night card / messages (right) on wide screens; stacked
+   on narrow ones (Players opening a character/prediction picker, or a small
+   Storyteller viewport). */
+.seat-modal-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+@media (min-width: 800px) {
+  .seat-modal-columns {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .seat-modal-left {
+    flex: 0 0 340px;
+  }
+
+  .seat-modal-right {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .character-picker-card {
@@ -716,7 +765,7 @@ button.danger {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1.5rem;
-  max-width: 640px;
+  max-width: min(96vw, 960px);
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
@@ -786,7 +835,11 @@ button.danger {
 .script-view {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.4rem;
+}
+
+.script-view h2 {
+  margin-bottom: 0.2rem;
 }
 
 /* Newspaper-style CSS columns across the WHOLE script (not per-group) so a
@@ -799,37 +852,39 @@ button.danger {
 
 .script-group {
   break-inside: avoid-column;
-  margin-top: 1rem;
+  margin-top: 0.6rem;
 }
 
 .script-group h3 {
+  margin: 0 0 0.2rem;
   break-after: avoid-column;
 }
 
 .script-character-list {
   list-style: none;
-  margin: 0.4rem 0 0;
+  margin: 0.3rem 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.2rem;
 }
 
+/* No box per item (was contributing to the script not fitting one screen) —
+   just a hairline separator between rows. */
 .script-character-item {
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
   position: relative;
   break-inside: avoid-column;
 }
 
 .script-character-token {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
@@ -954,7 +1009,11 @@ button.danger {
   text-transform: capitalize;
 }
 
-.character-popup-clarification,
+.character-popup-clarification {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
 .character-popup-flavor {
   font-size: 0.9rem;
   color: var(--text-muted);
@@ -1072,44 +1131,18 @@ button.danger {
 
 /* Player: town square panel */
 
-.town-square-summary {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-}
-
-.town-square-list {
+.town-square-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  min-height: 0;
 }
 
-.town-square-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.5rem;
+.town-square-panel h2 {
+  margin-bottom: 0.15rem;
 }
 
-.town-square-row.dead {
-  opacity: 0.65;
-}
-
-.town-square-name {
-  font-weight: 600;
-  min-width: 90px;
-}
-
-.town-square-prediction-label {
-  font-size: 0.8rem;
+.town-square-summary {
   color: var(--text-muted);
+  font-size: 0.85rem;
   margin: 0;
-}
-
-.town-square-note-input {
-  flex: 1;
-  min-width: 100px;
 }
