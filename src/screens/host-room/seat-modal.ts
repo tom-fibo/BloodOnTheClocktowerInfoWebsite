@@ -3,10 +3,9 @@ import { closeModal } from '../../ui/modal'
 import type { HostRoomHandle } from '../../trystero/room'
 import { getCharacter } from '../../data/characters'
 import { getScript } from '../../data/scripts'
-import { openCharacterPicker } from '../../ui/character-picker'
+import { openCharacterPicker, openMultiCharacterPicker } from '../../ui/character-picker'
 import { openCharacterPopup } from '../../ui/character-popup'
 import { nightCardElement, describeNightCardElement } from '../../game/night-card'
-import { shuffle } from '../../game/setup'
 import type { NightCardElement, PlayerInfo } from '../../types'
 
 export interface SeatModalCallbacks {
@@ -24,20 +23,6 @@ export interface SeatModalCallbacks {
   // The modal is being dismissed for good (✕, remove seat, or card sent) —
   // distinct from onUpdate because the caller must NOT reopen it afterward.
   onDismiss: () => void
-}
-
-// Messages and night cards are the same concept from the Storyteller's side
-// too — this is a simple two-way log scoped to one seat, replacing the old
-// standalone "Messages" tab. Same shape as the Player's own feed (see
-// night-actions-panel.ts's FeedEntry) so both sides describe an exchange the
-// same way. Sent night *cards* themselves are tracked separately in the
-// private audit log (grimoire-panel.ts), not duplicated here — this only
-// covers plain quick-messages (self: true) and unprompted Player cards
-// (self: false, via onPlayerCard).
-export interface SeatMessage {
-  ts: number
-  self: boolean
-  elements: NightCardElement[]
 }
 
 function seatsWithCharacters(handle: HostRoomHandle): { seat: PlayerInfo; characterId: string }[] {
@@ -122,6 +107,16 @@ function buildComposer(
         },
       })
     }),
+    elementButton('Choose a Player', () => {
+      composerElements.push(nightCardElement('choosePlayer', { prompt: 'Choose a player' }))
+      callbacks.onComposerChange()
+    }),
+    elementButton('Choose a Character', () => {
+      composerElements.push(
+        nightCardElement('chooseCharacter', { prompt: 'Choose a character', characterIds: script?.characterIds ?? [] }),
+      )
+      callbacks.onComposerChange()
+    }),
   ])
 
   const presetButtons = el('div', { className: 'preset-card-grid' }, [
@@ -130,23 +125,28 @@ function buildComposer(
       callbacks.onComposerChange()
     }),
     presetButton('Make a Choice', () => {
-      composerElements.push(nightCardElement('choosePlayer', { prompt: 'Make your choice' }))
+      composerElements.push(nightCardElement('text', { text: 'Make a Choice' }))
       callbacks.onComposerChange()
     }),
     presetButton('These characters are not in play', () => {
       if (!script) return
-      const inPlay = new Set(seatsWithCharacters(handle).map((s) => s.characterId))
-      const bluffs = shuffle(script.characterIds.filter((id) => !inPlay.has(id))).slice(0, 3)
-      composerElements.push(nightCardElement('text', { text: 'These characters are not in play:' }))
-      for (const id of bluffs) composerElements.push(nightCardElement('character', { characterId: id }))
-      callbacks.onComposerChange()
+      const inPlay = seatsWithCharacters(handle).map((s) => s.characterId)
+      openMultiCharacterPicker(script, {
+        title: 'Choose 3 characters not in play',
+        count: 3,
+        disabledIds: inPlay,
+        onConfirm: (characterIds) => {
+          composerElements.push(nightCardElement('text', { text: 'These characters are not in play:' }))
+          for (const id of characterIds) composerElements.push(nightCardElement('character', { characterId: id }))
+          callbacks.onComposerChange()
+        },
+      })
     }),
     presetButton('This is the Demon', () => {
       const demon = seatsWithCharacters(handle).find((s) => getCharacter(s.characterId)?.type === 'demon')
       composerElements.push(nightCardElement('text', { text: 'This is the Demon:' }))
       if (demon) {
         composerElements.push(nightCardElement('player', { name: demon.seat.name, peerId: demon.seat.peerId }))
-        composerElements.push(nightCardElement('character', { characterId: demon.characterId }))
       }
       callbacks.onComposerChange()
     }),
@@ -155,15 +155,20 @@ function buildComposer(
       composerElements.push(nightCardElement('text', { text: 'These are your Minions:' }))
       for (const minion of minions) {
         composerElements.push(nightCardElement('player', { name: minion.seat.name, peerId: minion.seat.peerId }))
-        composerElements.push(nightCardElement('character', { characterId: minion.characterId }))
       }
       callbacks.onComposerChange()
     }),
     presetButton('You are', () => {
       const currentCharacterId = handle.getCharacterAssignment(seat.seat) ?? null
-      composerElements.push(nightCardElement('text', { text: 'You are:' }))
-      if (currentCharacterId) {
-        composerElements.push(nightCardElement('characterChange', { characterId: currentCharacterId }))
+      const character = currentCharacterId ? getCharacter(currentCharacterId) : undefined
+      // Deliberately the same plain `text`/`character` elements the Good/Evil
+      // and Character quick buttons produce — indistinguishable in the
+      // composer list, so they can be freely edited/removed like any other
+      // element. This preset doesn't reassign the seat's character itself;
+      // use the "Change" button in the Character row for that.
+      if (character) {
+        composerElements.push(nightCardElement('text', { text: character.alignment === 'good' ? 'Good' : 'Evil' }))
+        composerElements.push(nightCardElement('character', { characterId: character.id }))
       }
       callbacks.onComposerChange()
     }),
@@ -200,10 +205,6 @@ function buildComposer(
       disabled: composerElements.length === 0,
       onclick: () => {
         if (composerElements.length === 0) return
-        const characterChange = composerElements.find((e) => e.kind === 'characterChange')
-        if (characterChange?.characterId) {
-          handle.assignCharacter(seat.seat, characterChange.characterId)
-        }
         handle.sendNightCard(seat.seat, composerElements)
         composerElements.length = 0
         closeModal()
@@ -214,17 +215,13 @@ function buildComposer(
   ])
 }
 
-function buildMessageLog(
-  handle: HostRoomHandle,
-  seat: PlayerInfo,
-  messageLog: SeatMessage[],
-  callbacks: SeatModalCallbacks,
-): HTMLElement {
+function buildMessageLog(handle: HostRoomHandle, seat: PlayerInfo): HTMLElement {
+  const messages = handle.getSeatMessages(seat.seat)
   const logList = el(
     'ul',
     { className: 'audit-log-list seat-message-log' },
-    messageLog.length
-      ? messageLog.map((msg) =>
+    messages.length
+      ? messages.map((msg) =>
           el('li', {}, [
             el('span', { className: 'audit-log-time', textContent: new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }),
             el('span', { className: 'audit-log-seat', textContent: msg.self ? 'You' : seat.name }),
@@ -237,31 +234,13 @@ function buildMessageLog(
       : [el('li', { className: 'roster-empty', textContent: 'No messages yet.' })],
   )
 
-  const input = el('input', { className: 'composer-input', placeholder: 'Quick message…' })
-  function send(): void {
-    const text = input.value.trim()
-    if (!text || !seat.peerId) return
-    handle.sendToPlayer(seat.peerId, text)
-    messageLog.push({ ts: Date.now(), self: true, elements: [nightCardElement('text', { text })] })
-    input.value = ''
-    callbacks.onComposerChange()
-  }
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') send()
-  })
-
-  return el('div', { className: 'seat-messages' }, [
-    el('h3', { textContent: 'Messages' }),
-    logList,
-    el('div', { className: 'composer-row' }, [input, el('button', { textContent: 'Send', onclick: send })]),
-  ])
+  return el('div', { className: 'seat-messages' }, [el('h3', { textContent: 'Messages' }), logList])
 }
 
 export function buildSeatModalContent(
   handle: HostRoomHandle,
   seat: PlayerInfo,
   composerElements: NightCardElement[],
-  messageLog: SeatMessage[],
   callbacks: SeatModalCallbacks,
 ): HTMLElement {
   const characterId = handle.getCharacterAssignment(seat.seat)
@@ -367,7 +346,7 @@ export function buildSeatModalContent(
     characterRow,
     el('label', { textContent: 'Private reminder:' }),
     seatNoteInput,
-    seat.peerId !== null ? buildMessageLog(handle, seat, messageLog, callbacks) : el('div'),
+    buildMessageLog(handle, seat),
   ])
 
   const rightColumn = el('div', { className: 'seat-modal-right' }, [

@@ -20,13 +20,16 @@ export interface TownSquareState {
 const predictions = new Map<number, string>()
 const notes = new Map<number, string>()
 
+// Shows the Player's own prediction (icon + name), same visual pattern as the
+// Grimoire showing a seat's actual assigned character — "they should see all
+// players as their prediction," not just a name in the popup.
 function seatTokenChildren(seat: PlayerInfo): (Node | string)[] {
+  const predictedId = predictions.get(seat.seat)
+  const predicted = predictedId ? getCharacter(predictedId) : undefined
   return [
-    renderTokenImage(undefined, seat.name),
+    renderTokenImage(predicted?.tokenUrl, predicted ? predicted.name : seat.name),
     el('span', { className: 'seat-token-name', textContent: seat.name }),
-    ...(predictions.has(seat.seat)
-      ? [el('span', { className: 'seat-token-character', textContent: getCharacter(predictions.get(seat.seat)!)?.name ?? '' })]
-      : []),
+    ...(predicted ? [el('span', { className: 'seat-token-character', textContent: predicted.name })] : []),
   ]
 }
 

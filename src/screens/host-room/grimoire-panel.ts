@@ -7,16 +7,12 @@ import { layoutInCircle } from '../../ui/circular-layout'
 import { deriveNightOrder } from '../../game/night-order'
 import { nightCardElement } from '../../game/night-card'
 import { renderTokenImage } from '../../ui/token-image'
-import { buildSeatModalContent, type SeatMessage } from './seat-modal'
+import { buildSeatModalContent } from './seat-modal'
 import { openSetupModal } from './setup-modal'
 import { openLobbyModal } from './lobby-modal'
 import type { NightCardElement, PlayerInfo } from '../../types'
 
-export function renderGrimoirePanel(
-  container: HTMLElement,
-  handle: HostRoomHandle,
-  messagesBySeat: Map<number, SeatMessage[]>,
-): void {
+export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHandle): void {
   let activeSeat: number | null = null
   let composerElements: NightCardElement[] = []
   let pickingPlayer = false
@@ -37,7 +33,6 @@ export function renderGrimoirePanel(
   ])
   const circleContainer = el('div', { className: 'seat-circle' })
   const nightOrderList = el('ol', { className: 'night-order-list' })
-  const auditLogList = el('ul', { className: 'audit-log-list' })
   const notesInput = el('textarea', {
     className: 'grimoire-notes-input',
     rows: 3,
@@ -63,12 +58,11 @@ export function renderGrimoirePanel(
       activeSeat = null
       return
     }
-    const seatMessages = messagesBySeat.get(seatNumber) ?? []
-    messagesBySeat.set(seatNumber, seatMessages)
-    const content = buildSeatModalContent(handle, seat, composerElements, seatMessages, {
+    // Opening a seat is how the Storyteller "reads" whatever arrived for it.
+    handle.markSeatRead(seatNumber)
+    const content = buildSeatModalContent(handle, seat, composerElements, {
       onUpdate: () => {
         refreshTokenGrid()
-        refreshAuditLog()
         // Not a no-op guard for its own sake — onDismiss (called first by
         // whichever action ends the interaction: remove seat, send card, ✕,
         // backdrop click) already nulled activeSeat in those cases, so this
@@ -96,9 +90,11 @@ export function renderGrimoirePanel(
         activeSeat = null
       })
     }
+    refreshTokenGrid()
   }
 
   function refreshTokenGrid(): void {
+    const unread = new Set(handle.getUnreadSeats())
     const tokens = seats().map((seat) => {
       const characterId = handle.getCharacterAssignment(seat.seat)
       const character = characterId ? getCharacter(characterId) : undefined
@@ -130,6 +126,7 @@ export function renderGrimoirePanel(
           renderTokenImage(character?.tokenUrl, character ? character.name : seat.name),
           el('span', { className: 'seat-token-name', textContent: seat.name }),
           ...(character ? [el('span', { className: 'seat-token-character', textContent: character.name })] : []),
+          ...(unread.has(seat.seat) ? [el('span', { className: 'unread-dot', title: 'Unread message' })] : []),
         ],
       )
     })
@@ -150,24 +147,6 @@ export function renderGrimoirePanel(
             return item
           })
         : [el('li', { className: 'roster-empty', textContent: 'Assign characters to seats to see the night order.' })]),
-    )
-  }
-
-  function refreshAuditLog(): void {
-    const log = [...handle.getAuditLog()].reverse()
-    auditLogList.replaceChildren(
-      ...(log.length
-        ? log.map((entry) =>
-            el('li', {}, [
-              el('span', {
-                className: 'audit-log-time',
-                textContent: new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              }),
-              el('span', { className: 'audit-log-seat', textContent: entry.name }),
-              el('span', { className: 'audit-log-summary', textContent: entry.summary }),
-            ]),
-          )
-        : [el('li', { className: 'roster-empty', textContent: 'No cards sent yet.' })]),
     )
   }
 
@@ -208,11 +187,11 @@ export function renderGrimoirePanel(
         pickingBanner,
         circleContainer,
         // Deliberately scrollable rather than fighting for space with the
-        // circle above — the circle should always be fully visible; notes and
-        // sent-card history scrolling is an accepted tradeoff.
+        // circle above — the circle should always be fully visible; notes
+        // scrolling is an accepted tradeoff. Sent cards live per-seat now
+        // (each seat's own popup), not in a separate global section here.
         el('div', { className: 'grimoire-below-fold' }, [
           el('div', { className: 'grimoire-notes' }, [el('h2', { textContent: 'Notes' }), notesInput]),
-          el('div', { className: 'grimoire-audit-log' }, [el('h2', { textContent: 'Sent cards (Storyteller only)' }), auditLogList]),
         ]),
       ]),
       el('div', { className: 'grimoire-sidebar' }, [
@@ -236,15 +215,12 @@ export function renderGrimoirePanel(
     // A vacant seat's modal shows the unseated pool — refresh it live if open.
     if (activeSeat !== null) openSeatFor(activeSeat, false)
   })
-  handle.onAuditLogChange(refreshAuditLog)
-  // The map itself is populated by a persistent subscription up in
-  // host-room/index.ts (so messages aren't lost while a different tab is
-  // active) — this one just refreshes the modal if it's open for that seat.
+  handle.onUnreadChange(() => refreshTokenGrid())
   handle.onPlayerCard((card) => {
+    refreshTokenGrid()
     if (activeSeat === card.seat) openSeatFor(activeSeat, false)
   })
 
   refreshTokenGrid()
   refreshNightOrder()
-  refreshAuditLog()
 }

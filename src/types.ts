@@ -56,12 +56,6 @@ export interface RosterPayload {
   [key: string]: JsonValue
 }
 
-export interface SecretMessagePayload {
-  text: string
-  ts: number
-  [key: string]: JsonValue
-}
-
 // Sent ST -> one Player only, never broadcast — a Player's character is private
 // even though the rest of their seat info (name/alive/voteToken) is public roster
 // data. `characterId: null` means "no character currently assigned."
@@ -77,14 +71,7 @@ export interface CharacterAssignPayload {
 // fields relevant to `kind` are populated (the rest `null`, not `undefined` —
 // `undefined` isn't a valid JsonValue); build these via game/night-card.ts's
 // `nightCardElement()` helper rather than writing the object literal by hand.
-export type NightCardElementKind =
-  | 'text'
-  | 'number'
-  | 'player'
-  | 'character'
-  | 'characterChange'
-  | 'choosePlayer'
-  | 'chooseCharacter'
+export type NightCardElementKind = 'text' | 'number' | 'player' | 'character' | 'choosePlayer' | 'chooseCharacter'
 
 export interface NightCardElement {
   kind: NightCardElementKind
@@ -116,4 +103,14 @@ export interface NightActionResponsePayload {
   chosenCharacterId: string | null
   ts: number
   [key: string]: JsonValue
+}
+
+// A single per-seat log entry, from the Storyteller's point of view — covers
+// both a sent night card (self: true) and an unprompted card a Player sent
+// (self: false, via the playerCard action). Not itself a network payload (no
+// index signature needed) — only ever stored locally and rendered.
+export interface SeatMessage {
+  ts: number
+  self: boolean
+  elements: NightCardElement[]
 }

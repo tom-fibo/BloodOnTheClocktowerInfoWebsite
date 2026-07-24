@@ -1,18 +1,17 @@
 import { joinRoom, selfId } from 'trystero'
 import { APP_ID, ACTIONS } from './config'
 import { DEFAULT_SCRIPT_ID } from '../data/scripts'
-import { getCharacter } from '../data/characters'
 import { getOrCreatePlayerToken } from '../utils/reconnect-token'
-import { loadHostState, saveHostState, clearHostState, type AuditLogEntry } from '../utils/host-persistence'
+import { loadHostState, saveHostState, clearHostState } from '../utils/host-persistence'
 import type {
   HelloPayload,
   RosterPayload,
-  SecretMessagePayload,
   CharacterAssignPayload,
   NightCardPayload,
   NightCardElement,
   NightActionResponsePayload,
   PlayerInfo,
+  SeatMessage,
 } from '../types'
 
 export interface UnseatedPeer {
@@ -23,7 +22,6 @@ export interface UnseatedPeer {
 export interface HostRoomHandle {
   selfId: string
   leave(): void
-  sendToPlayer(peerId: string, text: string): void
   onRosterChange(cb: (seats: PlayerInfo[]) => void): void
 
   getSeats(): PlayerInfo[]
@@ -47,6 +45,8 @@ export interface HostRoomHandle {
   assignCharacter(seat: number, characterId: string | null): void
   getCharacterAssignment(seat: number): string | undefined
 
+  // Sending a card also appends it to that seat's message log below — there is
+  // no separate global "sent cards" record anymore.
   sendNightCard(seat: number, elements: NightCardElement[]): void
   onNightActionResponse(
     cb: (response: {
@@ -59,9 +59,6 @@ export interface HostRoomHandle {
     }) => void,
   ): void
 
-  getAuditLog(): AuditLogEntry[]
-  onAuditLogChange(cb: (log: AuditLogEntry[]) => void): void
-
   getNote(): string
   setNote(note: string): void
 
@@ -70,10 +67,21 @@ export interface HostRoomHandle {
   getSeatNote(seat: number): string
   setSeatNote(seat: number, note: string): void
 
+  // Per-seat log of exchanged cards (sent night cards + unprompted Player
+  // cards) — "attached to the seat," persisted, and restored across both a
+  // Player reconnect and a Storyteller reload.
+  getSeatMessages(seat: number): SeatMessage[]
   // A Player composing their own unprompted card (a "Got it," a chosen
-  // player, custom text, or a queue of several) — the reverse direction of
-  // sendNightCard, landing in that seat's message log.
+  // player, custom text, or a queue of several) arrived — fires only for
+  // *incoming* cards, so panels know to live-refresh; the log itself is
+  // always read via getSeatMessages().
   onPlayerCard(cb: (card: { peerId: string; seat: number; elements: NightCardElement[]; ts: number }) => void): void
+
+  // Seats with an incoming card the Storyteller hasn't opened yet — drives
+  // the Grimoire's unread-dot indicator.
+  getUnreadSeats(): number[]
+  markSeatRead(seat: number): void
+  onUnreadChange(cb: (unreadSeats: number[]) => void): void
 }
 
 export interface PlayerRoomHandle {
@@ -83,36 +91,9 @@ export interface PlayerRoomHandle {
   sendPlayerCard(elements: NightCardElement[]): void
   respondToNightCard(forTs: number, response: { chosenPeerId?: string; chosenCharacterId?: string }): void
   onRosterChange(cb: (players: PlayerInfo[], storytellerId: string, scriptId: string) => void): void
-  onStorytellerMessage(cb: (msg: { text: string; ts: number }) => void): void
   onStorytellerLeave(cb: () => void): void
   onCharacterAssign(cb: (characterId: string | null) => void): void
   onNightCard(cb: (card: { elements: NightCardElement[]; ts: number }) => void): void
-}
-
-function summarizeElements(elements: NightCardElement[]): string {
-  return elements
-    .map((element) => {
-      switch (element.kind) {
-        case 'text':
-          return element.text ?? ''
-        case 'number':
-          return `number: ${element.value}`
-        case 'player':
-          return `player: ${element.name ?? element.peerId}`
-        case 'character':
-          return `character: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
-        case 'characterChange':
-          return `now the: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
-        case 'choosePlayer':
-          return `[choose a player] ${element.prompt ?? ''}`
-        case 'chooseCharacter':
-          return `[choose a character] ${element.prompt ?? ''}`
-        default:
-          return ''
-      }
-    })
-    .filter(Boolean)
-    .join(' · ')
 }
 
 export function createHostRoom(roomCode: string): HostRoomHandle {
@@ -120,7 +101,6 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
 
   const hello = room.makeAction<HelloPayload>(ACTIONS.HELLO)
   const roster = room.makeAction<RosterPayload>(ACTIONS.ROSTER)
-  const secretMessage = room.makeAction<SecretMessagePayload>(ACTIONS.SECRET_MESSAGE)
   const characterAssign = room.makeAction<CharacterAssignPayload>(ACTIONS.CHARACTER_ASSIGN)
   const nightCard = room.makeAction<NightCardPayload>(ACTIONS.NIGHT_CARD)
   const nightActionResponse = room.makeAction<NightActionResponsePayload>(ACTIONS.NIGHT_ACTION_RESPONSE)
@@ -138,9 +118,10 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   let scriptId = restored?.scriptId ?? DEFAULT_SCRIPT_ID
   const characterAssignments: Record<number, string> = restored?.characterAssignments ?? {}
   const reconnectTokenToSeat: Record<string, number> = restored?.reconnectTokenToSeat ?? {}
-  const auditLog: AuditLogEntry[] = restored?.auditLog ?? []
   let note = restored?.note ?? ''
   const seatNotes: Record<number, string> = restored?.seatNotes ?? {}
+  const seatMessages: Record<number, SeatMessage[]> = restored?.seatMessages ?? {}
+  const unreadSeats = new Set<number>(restored?.unreadSeats ?? [])
 
   // Connected-but-not-yet-placed devices. Not persisted: after a Storyteller
   // reload, every peerId here would be stale anyway (fresh Trystero session),
@@ -154,9 +135,9 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   // is looking at the Script tab, not the Grimoire.
   const rosterListeners = new Set<(seats: PlayerInfo[]) => void>()
   const nightActionResponseListeners = new Set<Parameters<HostRoomHandle['onNightActionResponse']>[0]>()
-  const auditLogListeners = new Set<(log: AuditLogEntry[]) => void>()
   const unseatedListeners = new Set<(peers: UnseatedPeer[]) => void>()
   const playerCardListeners = new Set<Parameters<HostRoomHandle['onPlayerCard']>[0]>()
+  const unreadListeners = new Set<(unreadSeats: number[]) => void>()
 
   function getUnseatedList(): UnseatedPeer[] {
     return [...unseatedPeers.entries()].map(([peerId, { name }]) => ({ peerId, name }))
@@ -167,8 +148,22 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
     unseatedListeners.forEach((cb) => cb(list))
   }
 
+  function notifyUnreadChange(): void {
+    const list = [...unreadSeats]
+    unreadListeners.forEach((cb) => cb(list))
+  }
+
   function persist(): void {
-    saveHostState(roomCode, { seats, scriptId, characterAssignments, reconnectTokenToSeat, auditLog, note, seatNotes })
+    saveHostState(roomCode, {
+      seats,
+      scriptId,
+      characterAssignments,
+      reconnectTokenToSeat,
+      note,
+      seatNotes,
+      seatMessages,
+      unreadSeats: [...unreadSeats],
+    })
   }
 
   function broadcastRoster(): void {
@@ -230,11 +225,6 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
     }
   }
 
-  // Note: `secretMessage` is only used in the Storyteller -> Player direction
-  // here (sendToPlayer, below) — Players send their own unprompted text via
-  // the richer `playerCard` action instead (see night-actions-panel.ts), so
-  // there's no `secretMessage.onMessage` handler on this side to receive one.
-
   nightActionResponse.onMessage = (data, { peerId }) => {
     const seatEntry = seats.find((p) => p.peerId === peerId)
     if (!seatEntry) return
@@ -252,6 +242,12 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   playerCard.onMessage = (data, { peerId }) => {
     const seatEntry = seats.find((p) => p.peerId === peerId)
     if (!seatEntry) return
+    const log = seatMessages[seatEntry.seat] ?? []
+    log.push({ ts: data.ts, self: false, elements: data.elements })
+    seatMessages[seatEntry.seat] = log
+    unreadSeats.add(seatEntry.seat)
+    persist()
+    notifyUnreadChange()
     playerCardListeners.forEach((cb) => cb({ peerId, seat: seatEntry.seat, elements: data.elements, ts: data.ts }))
   }
 
@@ -260,9 +256,6 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
     leave() {
       room.leave()
       clearHostState(roomCode)
-    },
-    sendToPlayer(peerId, text) {
-      secretMessage.send({ text, ts: Date.now() }, { target: peerId })
     },
     onRosterChange(cb) {
       rosterListeners.add(cb)
@@ -282,6 +275,8 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       seats.splice(index, 1)
       delete characterAssignments[seat]
       delete seatNotes[seat]
+      delete seatMessages[seat]
+      unreadSeats.delete(seat)
       broadcastRoster()
       persist()
     },
@@ -316,6 +311,20 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       if (aNote !== undefined) seatNotes[seatB] = aNote
       else delete seatNotes[seatB]
 
+      const aMessages = seatMessages[seatA]
+      const bMessages = seatMessages[seatB]
+      if (bMessages !== undefined) seatMessages[seatA] = bMessages
+      else delete seatMessages[seatA]
+      if (aMessages !== undefined) seatMessages[seatB] = aMessages
+      else delete seatMessages[seatB]
+
+      const aUnread = unreadSeats.has(seatA)
+      const bUnread = unreadSeats.has(seatB)
+      unreadSeats.delete(seatA)
+      unreadSeats.delete(seatB)
+      if (bUnread) unreadSeats.add(seatA)
+      if (aUnread) unreadSeats.add(seatB)
+
       for (const token of Object.keys(reconnectTokenToSeat)) {
         if (reconnectTokenToSeat[token] === seatA) reconnectTokenToSeat[token] = seatB
         else if (reconnectTokenToSeat[token] === seatB) reconnectTokenToSeat[token] = seatA
@@ -323,6 +332,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
 
       broadcastRoster()
       persist()
+      notifyUnreadChange()
     },
     setAlive(seat, alive) {
       const seatEntry = seats.find((p) => p.seat === seat)
@@ -389,19 +399,13 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       if (!seatEntry?.peerId) return
       const ts = Date.now()
       nightCard.send({ elements, ts }, { target: seatEntry.peerId })
-      auditLog.push({ ts, seat, name: seatEntry.name, summary: summarizeElements(elements) })
+      const log = seatMessages[seat] ?? []
+      log.push({ ts, self: true, elements })
+      seatMessages[seat] = log
       persist()
-      auditLogListeners.forEach((cb) => cb([...auditLog]))
     },
     onNightActionResponse(cb) {
       nightActionResponseListeners.add(cb)
-    },
-
-    getAuditLog() {
-      return [...auditLog]
-    },
-    onAuditLogChange(cb) {
-      auditLogListeners.add(cb)
     },
 
     getNote() {
@@ -421,8 +425,23 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       persist()
     },
 
+    getSeatMessages(seat) {
+      return [...(seatMessages[seat] ?? [])]
+    },
     onPlayerCard(cb) {
       playerCardListeners.add(cb)
+    },
+
+    getUnreadSeats() {
+      return [...unreadSeats]
+    },
+    markSeatRead(seat) {
+      if (!unreadSeats.delete(seat)) return
+      persist()
+      notifyUnreadChange()
+    },
+    onUnreadChange(cb) {
+      unreadListeners.add(cb)
     },
   }
 }
@@ -433,7 +452,6 @@ export function joinPlayerRoom(roomCode: string, initialName: string): PlayerRoo
 
   const hello = room.makeAction<HelloPayload>(ACTIONS.HELLO)
   const roster = room.makeAction<RosterPayload>(ACTIONS.ROSTER)
-  const secretMessage = room.makeAction<SecretMessagePayload>(ACTIONS.SECRET_MESSAGE)
   const characterAssign = room.makeAction<CharacterAssignPayload>(ACTIONS.CHARACTER_ASSIGN)
   const nightCard = room.makeAction<NightCardPayload>(ACTIONS.NIGHT_CARD)
   const nightActionResponse = room.makeAction<NightActionResponsePayload>(ACTIONS.NIGHT_ACTION_RESPONSE)
@@ -445,7 +463,6 @@ export function joinPlayerRoom(roomCode: string, initialName: string): PlayerRoo
   // each tab panel re-subscribes on activation, so a single slot would drop
   // events meant for a panel that isn't currently on screen.
   const rosterListeners = new Set<(players: PlayerInfo[], storytellerId: string, scriptId: string) => void>()
-  const messageListeners = new Set<(msg: { text: string; ts: number }) => void>()
   const storytellerLeaveListeners = new Set<() => void>()
   const characterListeners = new Set<(characterId: string | null) => void>()
   const nightCardListeners = new Set<(card: { elements: NightCardElement[]; ts: number }) => void>()
@@ -469,10 +486,6 @@ export function joinPlayerRoom(roomCode: string, initialName: string): PlayerRoo
   roster.onMessage = (data) => {
     storytellerId = data.storytellerId
     rosterListeners.forEach((cb) => cb(data.players, data.storytellerId, data.scriptId))
-  }
-
-  secretMessage.onMessage = (data) => {
-    messageListeners.forEach((cb) => cb({ text: data.text, ts: data.ts }))
   }
 
   characterAssign.onMessage = (data) => {
@@ -512,9 +525,6 @@ export function joinPlayerRoom(roomCode: string, initialName: string): PlayerRoo
     },
     onRosterChange(cb) {
       rosterListeners.add(cb)
-    },
-    onStorytellerMessage(cb) {
-      messageListeners.add(cb)
     },
     onStorytellerLeave(cb) {
       storytellerLeaveListeners.add(cb)

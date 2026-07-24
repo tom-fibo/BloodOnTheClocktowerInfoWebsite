@@ -35,36 +35,35 @@ export function openSetupModal(handle: HostRoomHandle, onAssigned: () => void): 
 
   function rebuild(): void {
     const total = selected.size
-    const groups = TYPE_ORDER.map((type) => {
-      const characters = script!.characterIds
-        .map((id) => getCharacter(id))
-        .filter((c): c is Character => c?.type === type)
+    // One flat grid (no per-type headers — with 22+ characters those alone
+    // pushed the grid past one screen); a single summary line replaces the
+    // old per-category running counts.
+    const summary = TYPE_ORDER.map((type) => `${TYPE_LABELS[type]} ${countOf(type)}/${dist[type]}`).join(' · ')
 
-      return el('div', { className: 'character-picker-group' }, [
-        el('h3', { textContent: `${TYPE_LABELS[type]} (${countOf(type)} / ${dist[type]})` }),
-        el(
-          'div',
-          { className: 'character-picker-grid' },
-          characters.map((character) => {
-            const isSelected = selected.has(character.id)
-            const item = el('button', {
-              className: `character-picker-item ${character.alignment}${isSelected ? ' selected' : ''}`,
-            }, [
-              character.tokenUrl
-                ? el('img', { src: character.tokenUrl, alt: character.name })
-                : el('div', { className: 'character-picker-token placeholder' }),
-              el('span', { textContent: character.name }),
-            ])
-            item.addEventListener('click', () => {
-              if (isSelected) selected.delete(character.id)
-              else selected.add(character.id)
-              rebuild()
-            })
-            return item
-          }),
-        ),
-      ])
-    })
+    const characters = script!.characterIds.map((id) => getCharacter(id)).filter((c): c is Character => Boolean(c))
+    const grid = el(
+      'div',
+      { className: 'character-picker-grid' },
+      characters.map((character) => {
+        const isSelected = selected.has(character.id)
+        const item = el(
+          'button',
+          { className: `character-picker-item ${character.alignment}${isSelected ? ' selected' : ''}` },
+          [
+            character.tokenUrl
+              ? el('img', { src: character.tokenUrl, alt: character.name })
+              : el('div', { className: 'character-picker-token placeholder' }),
+            el('span', { textContent: character.name }),
+          ],
+        )
+        item.addEventListener('click', () => {
+          if (isSelected) selected.delete(character.id)
+          else selected.add(character.id)
+          rebuild()
+        })
+        return item
+      }),
+    )
 
     const randomizeButton = el('button', {
       className: 'primary',
@@ -83,12 +82,9 @@ export function openSetupModal(handle: HostRoomHandle, onAssigned: () => void): 
         el('h2', { textContent: 'Setup' }),
         el('button', { className: 'character-popup-close', textContent: '✕', onclick: () => closeModal() }),
       ]),
-      el('p', {
-        className: 'text-muted',
-        textContent: 'Choose which characters are in play for this game. Assignment to seats is random.',
-      }),
+      el('p', { className: 'text-muted setup-summary', textContent: summary }),
       randomizeButton,
-      ...groups,
+      grid,
     ])
 
     // Update in place so toggling a character doesn't reset scroll to the top

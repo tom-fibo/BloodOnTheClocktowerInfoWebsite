@@ -124,7 +124,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     type: 'townsfolk',
     alignment: 'good',
     ability: 'Once per game, during the day, publicly choose a player: if they are the Demon, they die.',
-    clarification: 'Any player may claim to be the Slayer. Only a real Slayer can kill someone (otherwise, everyone is told that nothing happens).',
+    clarification: 'Any player may claim to be the Slayer. Only a real Slayer can kill someone (otherwise, nothing happens).',
     flavor: 'Die.',
   },
   {
@@ -152,7 +152,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     type: 'outsider',
     alignment: 'good',
     ability: 'Each night, choose a player (not yourself): tomorrow, you may only vote if they are voting too.',
-    clarification: '"You are responsible for managing this. Intentionally voting when your chosen master is not is considered cheating.',
+    clarification: 'You are responsible for managing this. Intentionally voting when your chosen master is not is considered cheating.',
     flavor: 'Yes, sir...\nNo, sir...\nCertainly, sir.',
     firstNight: 'You would choose a player.',
     otherNights: 'You would choose a player.',

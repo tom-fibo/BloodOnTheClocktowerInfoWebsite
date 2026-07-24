@@ -3,7 +3,6 @@ import { getState, setState } from '../../state/store'
 import { joinPlayerRoom } from '../../trystero/room'
 import { renderTabs } from '../../ui/tabs'
 import { DEFAULT_SCRIPT_ID } from '../../data/scripts'
-import { nightCardElement } from '../../game/night-card'
 import { saveLastSession, clearLastSession, saveLastName } from '../../utils/session'
 import { watchForStaleConnection } from '../../utils/connection-watchdog'
 import type { PlayerInfo } from '../../types'
@@ -64,13 +63,6 @@ export function renderJoinRoom(container: HTMLElement): void {
   })
 
   handle.onStorytellerLeave(() => banner.classList.remove('hidden'))
-
-  // Messages and night cards are the same feed (see night-actions-panel.ts) —
-  // a plain Storyteller message is just a card with one text element.
-  handle.onStorytellerMessage((msg) => {
-    feed.push({ ts: msg.ts, self: false, elements: [nightCardElement('text', { text: msg.text })] })
-    tabsHandle.setBadge('night-actions', true)
-  })
 
   handle.onCharacterAssign((characterId) => {
     nightActionsState.myCharacterId = characterId

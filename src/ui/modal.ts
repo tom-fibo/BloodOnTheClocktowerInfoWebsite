@@ -33,12 +33,21 @@ export function openModal(content: HTMLElement, className = '', onBackdropDismis
 // Swaps the currently-open overlay's content without tearing down and
 // recreating the overlay element itself — critical for anything that
 // re-renders on every small interaction (a composer button click, a Setup
-// checkbox toggle), since destroying/recreating the overlay resets its
-// scrollTop to 0 every time. Returns false (does nothing) if no modal is
-// currently open, so callers can fall back to `openModal` in that case.
+// checkbox toggle). Returns false (does nothing) if no modal is currently
+// open, so callers can fall back to `openModal` in that case.
+//
+// The overlay itself isn't recreated, but `content` (the card) IS a fresh
+// element each call, and the card — not the overlay — is the actual scroll
+// container (`.seat-modal-card`/`.character-picker-card` have their own
+// `overflow-y: auto`) — so a fresh card still starts at scrollTop 0 unless we
+// explicitly carry the old one's position over, which is what this does.
 export function updateModalContent(content: HTMLElement): boolean {
   if (!currentOverlay) return false
+  const previousCardScrollTop = currentOverlay.firstElementChild?.scrollTop ?? 0
+  const previousOverlayScrollTop = currentOverlay.scrollTop
   currentOverlay.replaceChildren(content)
+  content.scrollTop = previousCardScrollTop
+  currentOverlay.scrollTop = previousOverlayScrollTop
   return true
 }
 

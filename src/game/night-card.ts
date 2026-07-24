@@ -44,8 +44,6 @@ export function describeNightCardElement(element: NightCardElement): string {
       return `Player: ${element.name}`
     case 'character':
       return `Character: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
-    case 'characterChange':
-      return `You are: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
     case 'choosePlayer':
       return `[Choose a player] ${element.prompt}`
     case 'chooseCharacter':

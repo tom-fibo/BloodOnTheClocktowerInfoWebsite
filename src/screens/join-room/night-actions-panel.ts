@@ -44,10 +44,6 @@ function renderElement(element: NightCardElement, roster: PlayerInfo[]): HTMLEle
       const character = getCharacter(element.characterId ?? '')
       return characterChip('night-card-element character-chip', character, character?.name ?? element.characterId ?? '?')
     }
-    case 'characterChange': {
-      const character = getCharacter(element.characterId ?? '')
-      return characterChip('night-card-element character-chip change', character, `You are now: ${character?.name ?? element.characterId}`)
-    }
     case 'choosePlayer':
       return renderChoosePlayer(element, roster)
     case 'chooseCharacter':

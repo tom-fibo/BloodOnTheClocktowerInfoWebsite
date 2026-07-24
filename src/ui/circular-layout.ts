@@ -7,7 +7,7 @@ export function layoutInCircle(container: HTMLElement): void {
   const n = items.length
   if (n === 0) return
 
-  const radius = n <= 2 ? 0 : 42
+  const radius = n < 2 ? 0 : 48
   items.forEach((item, i) => {
     const angle = (i / n) * 2 * Math.PI - Math.PI / 2
     const x = 50 + radius * Math.cos(angle)

@@ -327,6 +327,7 @@ button.danger {
 }
 
 .seat-token {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -397,6 +398,19 @@ button.danger {
 .seat-token-character {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+/* Unread incoming message on this seat — a red dot on the Grimoire token,
+   cleared as soon as the Storyteller opens that seat's popup. */
+.unread-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 1px solid var(--bg);
 }
 
 .add-seat-button {
@@ -483,7 +497,6 @@ button.danger {
   overflow-y: auto;
 }
 
-.grimoire-audit-log,
 .grimoire-notes {
   margin-top: 1rem;
   border-top: 1px solid var(--border);
@@ -775,33 +788,38 @@ button.danger {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 0.35rem;
 }
 
 .character-picker-none {
   margin-bottom: 0.5rem;
 }
 
-.character-picker-group {
-  margin-top: 1rem;
+.setup-summary {
+  margin: 0 0 0.5rem;
 }
 
+/* No Townsfolk/Outsider/Minion/Demon headers — one flat grid, small tiles, so
+   the whole script's worth of characters fits without scrolling on most
+   screens (this didn't fit even with the categories removed until the tiles
+   themselves also shrank). */
 .character-picker-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+  gap: 0.35rem;
+  margin-top: 0.4rem;
 }
 
 .character-picker-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.2rem;
   background: var(--bg-alt);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.5rem 0.3rem;
-  font-size: 0.75rem;
+  padding: 0.3rem 0.2rem;
+  font-size: 0.7rem;
   text-align: center;
 }
 
@@ -810,10 +828,15 @@ button.danger {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
+.character-picker-item.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .character-picker-item img,
 .character-picker-token {
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -1101,10 +1124,6 @@ button.danger {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.3rem 0.6rem;
-}
-
-.character-chip.change {
-  border-color: var(--accent);
 }
 
 .character-chip-token {
