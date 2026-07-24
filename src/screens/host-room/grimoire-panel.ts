@@ -235,11 +235,21 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     const mainRect = grimoireMain.getBoundingClientRect()
     const areaRect = circleArea.getBoundingClientRect()
     const availableHeight = mainRect.bottom - areaRect.top
-    const size = Math.max(minCircleSize(seats().length), Math.min(areaRect.width, availableHeight, 760))
+    const size = Math.max(minCircleSize(seats().length), Math.min(areaRect.width, availableHeight))
     if (size <= 0) return
     circleContainer.style.width = `${size}px`
     circleContainer.style.height = `${size}px`
   }
+
+  // ResizeObserver on grimoireMain (not circleArea, which we ourselves
+  // resize — observing what you write to risks fighting yourself in a loop)
+  // catches every reason its available space can change: the window
+  // resizing, the header row wrapping to two lines, a picking/swap banner
+  // toggling visible. Banner/seat-count changes also call resizeCircleToFit()
+  // directly (see refreshTokenGrid() and the banner toggle sites) since
+  // those don't necessarily change grimoireMain's own box size for the
+  // observer to react to.
+  new ResizeObserver(() => resizeCircleToFit()).observe(grimoireMain)
 
   function refreshNightOrder(): void {
     const steps = deriveNightOrder(characterIdsInPlay(), isFirstNight)
@@ -341,17 +351,6 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
       el('div', { className: 'grimoire-notes' }, [el('h2', { textContent: 'Notes' }), notesInput]),
     ]),
   ])
-
-  // ResizeObserver on grimoireMain (not circleArea, which we ourselves
-  // resize — observing what you write to risks fighting yourself in a loop)
-  // catches every reason its available space can change: the window
-  // resizing, the header row wrapping to two lines, a picking/swap banner
-  // toggling visible. Banner/seat-count changes also call resizeCircleToFit()
-  // directly (see refreshTokenGrid() and the banner toggle sites) since
-  // those don't necessarily change grimoireMain's own box size for the
-  // observer to react to. Must come after grimoireMain is actually assigned
-  // above, not just declared — .observe() runs immediately, synchronously.
-  new ResizeObserver(() => resizeCircleToFit()).observe(grimoireMain)
 
   container.replaceChildren(
     el('div', { className: 'grimoire-layout' }, [
