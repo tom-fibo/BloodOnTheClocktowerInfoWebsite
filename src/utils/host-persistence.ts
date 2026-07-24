@@ -1,4 +1,4 @@
-import type { PlayerInfo, SeatMessage } from '../types'
+import type { NightCardPayload, PlayerInfo, SeatMessage } from '../types'
 
 // Everything the Storyteller's browser needs to restore a room after its own
 // tab reloads or crashes (same-device recovery only — this is plain
@@ -21,6 +21,10 @@ export interface HostState {
   // Grimoire's unread-dot indicator. Serialized as an array (plain JSON has no
   // Set); room.ts converts to/from a Set at runtime.
   unreadSeats: number[]
+  // Night cards sent to a seat while its occupant was disconnected — the ST
+  // can still prep and send a card for someone not currently looking at their
+  // phone; it's queued here and delivered once that seat's `hello` reconnects.
+  pendingCards: Record<number, NightCardPayload[]>
 }
 
 function storageKey(roomCode: string): string {

@@ -9,7 +9,6 @@ import type {
   CharacterAssignPayload,
   NightCardPayload,
   NightCardElement,
-  NightActionResponsePayload,
   PlayerInfo,
   SeatMessage,
 } from '../types'
@@ -46,18 +45,14 @@ export interface HostRoomHandle {
   getCharacterAssignment(seat: number): string | undefined
 
   // Sending a card also appends it to that seat's message log below — there is
-  // no separate global "sent cards" record anymore.
+  // no separate global "sent cards" record anymore. Works even if the seat is
+  // currently disconnected: the card is queued and delivered once that seat's
+  // occupant reconnects (see the `hello.onMessage` reclaim path).
   sendNightCard(seat: number, elements: NightCardElement[]): void
-  onNightActionResponse(
-    cb: (response: {
-      peerId: string
-      seat: number
-      forTs: number
-      chosenPeerId: string | null
-      chosenCharacterId: string | null
-      ts: number
-    }) => void,
-  ): void
+  // A seat with no device currently connected — sendNightCard still works, but
+  // the seat-modal warns the Storyteller and styles the Send button
+  // accordingly, since the card won't arrive until that player's device wakes up.
+  isSeatConnected(seat: number): boolean
 
   getNote(): string
   setNote(note: string): void
@@ -89,7 +84,6 @@ export interface PlayerRoomHandle {
   leave(): void
   updateName(name: string): void
   sendPlayerCard(elements: NightCardElement[]): void
-  respondToNightCard(forTs: number, response: { chosenPeerId?: string; chosenCharacterId?: string }): void
   onRosterChange(cb: (players: PlayerInfo[], storytellerId: string, scriptId: string) => void): void
   onStorytellerLeave(cb: () => void): void
   onCharacterAssign(cb: (characterId: string | null) => void): void
@@ -103,7 +97,6 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   const roster = room.makeAction<RosterPayload>(ACTIONS.ROSTER)
   const characterAssign = room.makeAction<CharacterAssignPayload>(ACTIONS.CHARACTER_ASSIGN)
   const nightCard = room.makeAction<NightCardPayload>(ACTIONS.NIGHT_CARD)
-  const nightActionResponse = room.makeAction<NightActionResponsePayload>(ACTIONS.NIGHT_ACTION_RESPONSE)
   const playerCard = room.makeAction<NightCardPayload>(ACTIONS.PLAYER_CARD)
 
   // Restore from this browser's own last session for this room code, if any —
@@ -122,6 +115,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   const seatNotes: Record<number, string> = restored?.seatNotes ?? {}
   const seatMessages: Record<number, SeatMessage[]> = restored?.seatMessages ?? {}
   const unreadSeats = new Set<number>(restored?.unreadSeats ?? [])
+  const pendingCards: Record<number, NightCardPayload[]> = restored?.pendingCards ?? {}
 
   // Connected-but-not-yet-placed devices. Not persisted: after a Storyteller
   // reload, every peerId here would be stale anyway (fresh Trystero session),
@@ -134,7 +128,6 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   // currently on screen — e.g. a player card arriving while the Storyteller
   // is looking at the Script tab, not the Grimoire.
   const rosterListeners = new Set<(seats: PlayerInfo[]) => void>()
-  const nightActionResponseListeners = new Set<Parameters<HostRoomHandle['onNightActionResponse']>[0]>()
   const unseatedListeners = new Set<(peers: UnseatedPeer[]) => void>()
   const playerCardListeners = new Set<Parameters<HostRoomHandle['onPlayerCard']>[0]>()
   const unreadListeners = new Set<(unreadSeats: number[]) => void>()
@@ -163,6 +156,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       seatNotes,
       seatMessages,
       unreadSeats: [...unreadSeats],
+      pendingCards,
     })
   }
 
@@ -194,9 +188,17 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       seatEntry.name = data.name
       unseatedPeers.delete(peerId)
       broadcastRoster()
-      persist()
       const characterId = characterAssignments[seatEntry.seat] ?? null
       characterAssign.send({ characterId, ts: Date.now() }, { target: peerId })
+
+      // Deliver anything the Storyteller sent while this seat's device was
+      // asleep/disconnected — queued in order, oldest first.
+      const queued = pendingCards[seatEntry.seat]
+      if (queued?.length) {
+        for (const card of queued) nightCard.send(card, { target: peerId })
+        delete pendingCards[seatEntry.seat]
+      }
+      persist()
       return
     }
 
@@ -223,20 +225,6 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
     if (unseatedPeers.delete(peerId)) {
       notifyUnseatedChange()
     }
-  }
-
-  nightActionResponse.onMessage = (data, { peerId }) => {
-    const seatEntry = seats.find((p) => p.peerId === peerId)
-    if (!seatEntry) return
-    const response = {
-      peerId,
-      seat: seatEntry.seat,
-      forTs: data.forTs,
-      chosenPeerId: data.chosenPeerId,
-      chosenCharacterId: data.chosenCharacterId,
-      ts: data.ts,
-    }
-    nightActionResponseListeners.forEach((cb) => cb(response))
   }
 
   playerCard.onMessage = (data, { peerId }) => {
@@ -276,6 +264,7 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       delete characterAssignments[seat]
       delete seatNotes[seat]
       delete seatMessages[seat]
+      delete pendingCards[seat]
       unreadSeats.delete(seat)
       broadcastRoster()
       persist()
@@ -317,6 +306,13 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
       else delete seatMessages[seatA]
       if (aMessages !== undefined) seatMessages[seatB] = aMessages
       else delete seatMessages[seatB]
+
+      const aPending = pendingCards[seatA]
+      const bPending = pendingCards[seatB]
+      if (bPending !== undefined) pendingCards[seatA] = bPending
+      else delete pendingCards[seatA]
+      if (aPending !== undefined) pendingCards[seatB] = aPending
+      else delete pendingCards[seatB]
 
       const aUnread = unreadSeats.has(seatA)
       const bUnread = unreadSeats.has(seatB)
@@ -396,16 +392,26 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
 
     sendNightCard(seat, elements) {
       const seatEntry = seats.find((p) => p.seat === seat)
-      if (!seatEntry?.peerId) return
+      if (!seatEntry) return
       const ts = Date.now()
-      nightCard.send({ elements, ts }, { target: seatEntry.peerId })
+      const payload: NightCardPayload = { elements, ts }
+      if (seatEntry.peerId) {
+        nightCard.send(payload, { target: seatEntry.peerId })
+      } else {
+        // Seat's device isn't connected right now — queue it for delivery once
+        // `hello.onMessage` sees that seat reconnect, rather than dropping it.
+        const queue = pendingCards[seat] ?? []
+        queue.push(payload)
+        pendingCards[seat] = queue
+      }
       const log = seatMessages[seat] ?? []
       log.push({ ts, self: true, elements })
       seatMessages[seat] = log
       persist()
     },
-    onNightActionResponse(cb) {
-      nightActionResponseListeners.add(cb)
+    isSeatConnected(seat) {
+      const seatEntry = seats.find((p) => p.seat === seat)
+      return seatEntry !== undefined && seatEntry.peerId !== null
     },
 
     getNote() {
@@ -454,7 +460,6 @@ export function joinPlayerRoom(roomCode: string, initialName: string): PlayerRoo
   const roster = room.makeAction<RosterPayload>(ACTIONS.ROSTER)
   const characterAssign = room.makeAction<CharacterAssignPayload>(ACTIONS.CHARACTER_ASSIGN)
   const nightCard = room.makeAction<NightCardPayload>(ACTIONS.NIGHT_CARD)
-  const nightActionResponse = room.makeAction<NightActionResponsePayload>(ACTIONS.NIGHT_ACTION_RESPONSE)
   const playerCard = room.makeAction<NightCardPayload>(ACTIONS.PLAYER_CARD)
 
   let name = initialName
@@ -510,18 +515,6 @@ export function joinPlayerRoom(roomCode: string, initialName: string): PlayerRoo
     sendPlayerCard(elements) {
       if (!storytellerId) return
       playerCard.send({ elements, ts: Date.now() }, { target: storytellerId })
-    },
-    respondToNightCard(forTs, response) {
-      if (!storytellerId) return
-      nightActionResponse.send(
-        {
-          forTs,
-          chosenPeerId: response.chosenPeerId ?? null,
-          chosenCharacterId: response.chosenCharacterId ?? null,
-          ts: Date.now(),
-        },
-        { target: storytellerId },
-      )
     },
     onRosterChange(cb) {
       rosterListeners.add(cb)

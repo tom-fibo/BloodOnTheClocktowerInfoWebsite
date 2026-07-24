@@ -55,3 +55,11 @@ export function closeModal(): void {
   currentOverlay?.remove()
   currentOverlay = null
 }
+
+// Lets an automatic reload (connection watchdog, disconnect-banner timer)
+// check before firing — reloading out from under an open modal (a seat
+// composer, a character picker) would silently discard whatever the user was
+// doing in it.
+export function isModalOpen(): boolean {
+  return currentOverlay !== null
+}

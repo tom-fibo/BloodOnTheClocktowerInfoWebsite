@@ -71,7 +71,7 @@ export interface CharacterAssignPayload {
 // fields relevant to `kind` are populated (the rest `null`, not `undefined` —
 // `undefined` isn't a valid JsonValue); build these via game/night-card.ts's
 // `nightCardElement()` helper rather than writing the object literal by hand.
-export type NightCardElementKind = 'text' | 'number' | 'player' | 'character' | 'choosePlayer' | 'chooseCharacter'
+export type NightCardElementKind = 'text' | 'number' | 'player' | 'character'
 
 export interface NightCardElement {
   kind: NightCardElementKind
@@ -80,8 +80,6 @@ export interface NightCardElement {
   peerId: string | null
   name: string | null
   characterId: string | null
-  prompt: string | null
-  characterIds: string[] | null
   [key: string]: JsonValue
 }
 
@@ -90,17 +88,6 @@ export interface NightCardElement {
 // and send it as one message.
 export interface NightCardPayload {
   elements: NightCardElement[]
-  ts: number
-  [key: string]: JsonValue
-}
-
-// Sent Player -> ST, targeted — a Player's answer to a choosePlayer/chooseCharacter
-// prompt embedded in a NightCardPayload. `forTs` identifies which card is being
-// answered.
-export interface NightActionResponsePayload {
-  forTs: number
-  chosenPeerId: string | null
-  chosenCharacterId: string | null
   ts: number
   [key: string]: JsonValue
 }

@@ -107,16 +107,6 @@ function buildComposer(
         },
       })
     }),
-    elementButton('Choose a Player', () => {
-      composerElements.push(nightCardElement('choosePlayer', { prompt: 'Choose a player' }))
-      callbacks.onComposerChange()
-    }),
-    elementButton('Choose a Character', () => {
-      composerElements.push(
-        nightCardElement('chooseCharacter', { prompt: 'Choose a character', characterIds: script?.characterIds ?? [] }),
-      )
-      callbacks.onComposerChange()
-    }),
   ])
 
   const presetButtons = el('div', { className: 'preset-card-grid' }, [
@@ -161,12 +151,15 @@ function buildComposer(
     presetButton('You are', () => {
       const currentCharacterId = handle.getCharacterAssignment(seat.seat) ?? null
       const character = currentCharacterId ? getCharacter(currentCharacterId) : undefined
-      // Deliberately the same plain `text`/`character` elements the Good/Evil
-      // and Character quick buttons produce — indistinguishable in the
-      // composer list, so they can be freely edited/removed like any other
-      // element. This preset doesn't reassign the seat's character itself;
-      // use the "Change" button in the Character row for that.
+      // The "You are" text tells the player the following elements describe
+      // themself (as opposed to e.g. a Demon/Minion reveal about someone
+      // else) — the Good/Evil + Character elements after it are otherwise
+      // identical to the plain Good/Evil/Character quick buttons, and remain
+      // freely editable/removable like any other composer element. This
+      // preset doesn't reassign the seat's character itself; use the
+      // "Change" button in the Character row for that.
       if (character) {
+        composerElements.push(nightCardElement('text', { text: 'You are' }))
         composerElements.push(nightCardElement('text', { text: character.alignment === 'good' ? 'Good' : 'Evil' }))
         composerElements.push(nightCardElement('character', { characterId: character.id }))
       }
@@ -199,9 +192,22 @@ function buildComposer(
       }),
     ]),
     elementList,
+    // A disconnected seat can still receive a card — it's queued and delivered
+    // once that player's device reconnects (e.g. asleep at night) — but the
+    // Storyteller should clearly see that it won't arrive immediately.
+    ...(!handle.isSeatConnected(seat.seat)
+      ? [
+          el('p', {
+            className: 'send-warning-text',
+            textContent: "This seat isn't connected — the card will be delivered once they reconnect.",
+          }),
+        ]
+      : []),
     el('button', {
-      className: 'primary send-card-button',
-      textContent: `Send card (${composerElements.length})`,
+      className: `primary send-card-button${!handle.isSeatConnected(seat.seat) ? ' send-card-button-pending' : ''}`,
+      textContent: handle.isSeatConnected(seat.seat)
+        ? `Send card (${composerElements.length})`
+        : `Queue card (${composerElements.length})`,
       disabled: composerElements.length === 0,
       onclick: () => {
         if (composerElements.length === 0) return
@@ -349,11 +355,7 @@ export function buildSeatModalContent(
     buildMessageLog(handle, seat),
   ])
 
-  const rightColumn = el('div', { className: 'seat-modal-right' }, [
-    seat.peerId !== null
-      ? buildComposer(handle, seat, composerElements, callbacks)
-      : el('p', { className: 'roster-empty', textContent: 'Night cards can be sent once a player is connected to this seat.' }),
-  ])
+  const rightColumn = el('div', { className: 'seat-modal-right' }, [buildComposer(handle, seat, composerElements, callbacks)])
 
   return el('div', { className: 'seat-modal-card' }, [
     el('button', {

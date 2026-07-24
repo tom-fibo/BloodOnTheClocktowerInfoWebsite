@@ -11,8 +11,6 @@ interface NightCardElementFields {
   peerId?: string | null
   name?: string
   characterId?: string
-  prompt?: string
-  characterIds?: string[]
 }
 
 // NightCardElement's fields are all required-but-nullable (Trystero's JsonValue
@@ -26,8 +24,6 @@ export function nightCardElement(kind: NightCardElementKind, fields: NightCardEl
     peerId: fields.peerId ?? null,
     name: fields.name ?? null,
     characterId: fields.characterId ?? null,
-    prompt: fields.prompt ?? null,
-    characterIds: fields.characterIds ?? null,
   }
 }
 
@@ -44,9 +40,5 @@ export function describeNightCardElement(element: NightCardElement): string {
       return `Player: ${element.name}`
     case 'character':
       return `Character: ${getCharacter(element.characterId ?? '')?.name ?? element.characterId}`
-    case 'choosePlayer':
-      return `[Choose a player] ${element.prompt}`
-    case 'chooseCharacter':
-      return `[Choose a character] ${element.prompt}`
   }
 }

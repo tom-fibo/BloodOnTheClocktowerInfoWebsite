@@ -5,6 +5,7 @@ import { renderTabs } from '../../ui/tabs'
 import { renderQrCode } from '../../ui/qr-code'
 import { saveLastSession, clearLastSession } from '../../utils/session'
 import { watchForStaleConnection } from '../../utils/connection-watchdog'
+import { isModalOpen } from '../../ui/modal'
 import { renderGrimoirePanel } from './grimoire-panel'
 import { renderScriptPanel } from './script-panel'
 
@@ -51,5 +52,8 @@ export function renderHostRoom(container: HTMLElement): void {
     { id: 'script', label: 'Script', render: (c) => renderScriptPanel(c, handle) },
   ])
 
-  watchForStaleConnection(() => location.reload())
+  watchForStaleConnection(() => {
+    if (isModalOpen()) return
+    location.reload()
+  })
 }

@@ -55,9 +55,20 @@ player's persistent **reconnect token** (see below). It still regenerates on a f
 page reload, but that no longer means "the same human reappears as a new roster
 row" — see "Seats, reconnect, and persistence" below for how that's now handled.
 
-### The six Trystero actions (`src/trystero/config.ts`, `src/trystero/room.ts`)
+### The five Trystero actions (`src/trystero/config.ts`, `src/trystero/room.ts`)
 
-There used to be a seventh, `secretMessage` — a plain-text action shared by both
+There used to be a sixth, `nightActionResponse` — a Player's structured answer to a
+`choosePlayer`/`chooseCharacter` prompt embedded in a card. It was removed along with
+those two `NightCardElementKind`s entirely: the Storyteller sends "Make a Choice" (now
+just plain text) and the Player replies with their own night card through the unified
+message log (see "Messages and night cards are unified" below) — a separate
+choose-and-respond element added a whole extra action, payload type, and per-card
+response-UI wiring without adding any capability the unified feed didn't already cover.
+If you're tempted to reintroduce a structured "pick one of these and send it back"
+element, don't — route it through the existing composer-then-`sendPlayerCard` flow
+instead.
+
+There also used to be a seventh (by that older count), `secretMessage` — a plain-text action shared by both
 directions. It's gone entirely now, not just unused on one side: once the
 Storyteller's "quick message" send box was removed (custom text in the night-card
 composer already covers free text) and Players moved to `playerCard` for their own
@@ -78,17 +89,13 @@ cards are unified" below).
 - `characterAssign` (Storyteller → one Player, targeted): `{characterId, ts}` — the
   *only* way a Player learns their own character. Never broadcast.
 - `nightCard` (Storyteller → one Player, targeted): `{elements: NightCardElement[],
-  ts}` — a composed night card (see "Night cards" below).
+  ts}` — a composed night card (see "Night cards" below). Works even if the target
+  seat is currently disconnected — see "Sending to a disconnected seat" below.
 - `playerCard` (Player → Storyteller, targeted): same payload shape as `nightCard`
   (literally reuses the `NightCardPayload` type — no separate type needed since the
   shape carries no directional semantics itself) — a Player's own composed card (a
   "Got it," a chosen player, custom text, or several queued together). The reverse
   direction of `nightCard`; lands in that seat's message log via `onPlayerCard`.
-- `nightActionResponse` (Player → Storyteller, targeted): `{forTs, chosenPeerId,
-  chosenCharacterId, ts}` — a Player's answer to a `choosePlayer`/`chooseCharacter`
-  prompt embedded in a card. `chosenPeerId`/`chosenCharacterId` are typed `string |
-  null`, not optional — Trystero's `JsonValue` constraint rejects `undefined` (see
-  the `NightCardElement` comment in `types.ts`).
 
 **Roster authority — read this before touching `room.ts`:** the Storyteller's client is
 the single source of truth for seat order (a mesh has no other way to guarantee every
@@ -141,15 +148,19 @@ is no code path that lets this leak into a broadcast payload. Keep it that way.
 
 `NightCardElement` (`types.ts`) is a flat tagged interface, not a discriminated union —
 every field is present but `null` unless relevant to that element's `kind` (`text`,
-`number`, `player`, `character`, `choosePlayer`, `chooseCharacter`). There used to also
-be a `characterChange` kind, specifically for the "You are" preset's reveal — it was
-removed because the Storyteller asked for that preset to add the exact same plain
-`text`/`character` elements the Good/Evil/Character quick buttons produce (so they're
-indistinguishable and freely editable in the composer list), which made
-`characterChange` a kind with no remaining producer. Its side effect (automatically
-calling `handle.assignCharacter`) went with it — an actual character reassignment now
-only ever happens through the "Change" button in a seat's Character row, never
-implicitly via a sent card.
+`number`, `player`, `character`). There used to also be a `characterChange` kind,
+specifically for the "You are" preset's reveal — it was removed because the
+Storyteller asked for that preset to add the exact same plain `text`/`character`
+elements the Good/Evil/Character quick buttons produce (so they're indistinguishable
+and freely editable in the composer list), which made `characterChange` a kind with no
+remaining producer. Its side effect (automatically calling `handle.assignCharacter`)
+went with it — an actual character reassignment now only ever happens through the
+"Change" button in a seat's Character row, never implicitly via a sent card. There also
+used to be `choosePlayer`/`chooseCharacter` kinds (plus `prompt`/`characterIds` fields
+to support them) — removed along with the `nightActionResponse` action they drove (see
+"The five Trystero actions" above); "You are" now additionally prepends a plain "You
+are" text element ahead of the Good/Evil/Character ones, so the recipient knows the
+following info describes themself rather than someone else.
 This is because `NightCardElement` needs Trystero's `[key: string]: JsonValue` index
 signature (see below), and TypeScript's `JsonValue` union rejects `undefined` — so
 optional (`field?: T`) fields don't compile, only required-but-nullable (`field: T |
@@ -167,31 +178,38 @@ don't reintroduce a second copy.
 
 A card is `{elements: NightCardElement[], ts}` — the Storyteller composes several
 elements (e.g. a `text` plus a `number`) and sends them as one `nightCard` message,
-per TODO.md's "prepare all information and then send it in one card." The Storyteller
-also appends a locally-summarized line to its private audit log (`getAuditLog()`)
-whenever a card is sent — never networked, just a `localStorage`-backed scratch record
-for "what did I tell this player" disputes.
+per TODO.md's "prepare all information and then send it in one card." There is no
+separate audit log anymore — the card is appended directly to that seat's own
+`seatMessages` entry (see "Messages and night cards are unified" below), which is
+itself the only record of what was sent.
 
-**Known limitation:** a card can contain multiple `choosePlayer`/`chooseCharacter`
-prompts, but the Player-side UI (`night-actions-panel.ts`) only wires up a single
-"Send response" button per card, driven by whichever `<select>` its `querySelector`
-finds first. Abilities needing two choices in one prompt (e.g. Fortune Teller's
-"choose 2 players") aren't fully representable yet — split them into two cards, or
-extend the response UI to loop over every prompt element and send multiple responses,
-before relying on this for a genuinely two-target ability.
+### Sending to a disconnected seat (`pendingCards`)
 
-### Every payload interface needs the index signature (still true, 5 payload types for 6 actions)
+`sendNightCard(seat, elements)` no longer requires the target seat to have a device
+currently connected. If `seatEntry.peerId` is `null`, the card is pushed onto
+`pendingCards: Record<seat, NightCardPayload[]>` (persisted alongside the rest of
+`HostState`) instead of being sent immediately; it's still appended to `seatMessages`
+right away either way, since from the Storyteller's point of view the card was sent the
+moment they clicked the button, regardless of delivery timing. Delivery happens the
+next time that seat's `hello` reclaims it: the reclaim branch of `hello.onMessage` now
+also drains and clears that seat's `pendingCards` queue (oldest first) before
+persisting. `removeSeat`/`swapSeats` keep `pendingCards` in sync the same way they do
+`seatMessages`/`seatNotes`. `HostRoomHandle.isSeatConnected(seat)` is what
+`seat-modal.ts` uses to decide whether to show the Send button as a normal "Send card"
+or an orange/warning-colored "Queue card" with an inline warning line — this is a pure
+read, it doesn't affect whether sending is allowed (it always is).
+
+### Every payload interface needs the index signature (still true, 4 payload types for 5 actions)
 
 Trystero's `makeAction<T>()` requires an explicit `[key: string]: JsonValue` index
 signature on named interfaces passed as `T` (a plain object literal wouldn't need
 this, but a declared interface does) — this applies to `HelloPayload`,
-`RosterPayload`, `CharacterAssignPayload`, `NightCardPayload`, and
-`NightActionResponsePayload` in `types.ts`. Five *types* for six *actions* because
-`playerCard` reuses `NightCardPayload` verbatim rather than needing its own — the
-shape (`{elements, ts}`) carries no inherent direction. `SeatMessage` (also in
-`types.ts`, next to these) looks similar but is *not* a network payload — it's never
-sent over Trystero itself, only stored/rendered locally, so it doesn't need the index
-signature.
+`RosterPayload`, `CharacterAssignPayload`, and `NightCardPayload` in `types.ts`. Four
+*types* for five *actions* because `playerCard` reuses `NightCardPayload` verbatim
+rather than needing its own — the shape (`{elements, ts}`) carries no inherent
+direction. `SeatMessage` (also in `types.ts`, next to these) looks similar but is
+*not* a network payload — it's never sent over Trystero itself, only stored/rendered
+locally, so it doesn't need the index signature.
 
 ### Multiple subscribers per event, not one
 
@@ -230,9 +248,8 @@ right seat.
 
 **Enforcing "Players can't message Players":** this is structural, not just a hidden
 UI control. `src/screens/join-room/` has no code path that accepts a Player-supplied
-target peerId — both `sendPlayerCard` and `respondToNightCard` in
-`src/trystero/room.ts` hardcode `{target: storytellerId}`. Caveat: a technically
-sophisticated Player could still
+target peerId — `sendPlayerCard` in `src/trystero/room.ts` hardcodes `{target:
+storytellerId}`. Caveat: a technically sophisticated Player could still
 hand-invoke Trystero from their own devtools console to message another Player
 directly — there is no server in this architecture to prevent that. Accepted
 limitation for an in-person social game; not something to chase.
@@ -263,7 +280,20 @@ who switches devices.
   state behind for next time the same room code is reused — but an accidental
   reload/crash does NOT clear it, which is the whole point.
 
-A third, separate mechanism, `src/utils/session.ts`, is what makes a reload land back
+A third, same-browser-only mechanism, `src/utils/player-local-state.ts`, persists
+purely client-side Player scratch state that's never sent anywhere: their own view of
+the unified feed (`loadPlayerFeed`/`savePlayerFeed`, keyed by room code) and their Town
+Square predictions/notes (`loadTownSquareLocal`/`saveTownSquareLocal`). Both used to be
+in-memory only and were lost on the Player's own reload — the Storyteller's own copy of
+the message exchange already survived (see "Messages and night cards are unified"
+below), but the Player's local view of it didn't, which is what this closes. Loaded
+once at module-init time in `town-square-panel.ts`/`join-room/index.ts` and
+re-persisted on every mutation; there's no cross-device sync here any more than there
+is for `host-persistence.ts` — it's scoped to `localStorage`, so switching devices
+starts the Player's local view fresh (their seat/character/roster info itself still
+comes back correctly via the reconnect token, only their own scratch notes are lost).
+
+A fourth mechanism, `src/utils/session.ts`, is what makes a reload land back
 on the right *screen* at all rather than the landing page — `saveLastSession({screen,
 roomCode, selfName})` is called on entering `host-room`/`join-room`, `main.ts` reads
 it back via `loadLastSession()` on boot (unless a `?join=` URL param is present, which
@@ -285,10 +315,31 @@ reconnect (untested, and `selfId` reappearing under a new `joinRoom()` call whil
 peers still hold the old one is unclear behavior), this detects the likely trigger —
 hidden for more than 15 seconds — via the Page Visibility API and does a full
 `location.reload()`, which is guaranteed to recover correctly because it's the exact
-scenario the reconnect-token/host-state mechanisms already handle. Both
-`host-room/index.ts` and `join-room/index.ts` wire this to `() =>
-location.reload()`. The 15-second threshold is an untested guess — revisit it once
-there's a real report to calibrate against.
+scenario the reconnect-token/host-state mechanisms already handle. The 15-second
+threshold is an untested guess — revisit it once there's a real report to calibrate
+against.
+
+Neither `host-room/index.ts` nor `join-room/index.ts` wire this straight to `() =>
+location.reload()` anymore — both now check `ui/modal.ts`'s `isModalOpen()` first and
+skip the reload if a modal is currently open (a seat popup, a character picker), since
+reloading out from under one would silently discard whatever the user was mid-way
+through. `join-room/index.ts` additionally skips if
+`nightActionsState.pendingElements.length > 0` — the Player's composer isn't inside a
+modal, so `isModalOpen()` alone wouldn't catch "mid-way through queueing a night card."
+This is a one-shot skip, not a retry: if the guard trips, the reload for that
+particular stale-connection event just doesn't happen, and the user is expected to
+either finish what they're doing and use the disconnect banner's manual "Refresh
+connection" button, or wait for the next stale-connection detection.
+
+`join-room/index.ts` also has its own separate, narrower auto-reload: previously a
+Player stuck on `onStorytellerLeave`'s disconnect banner had no way to recover short of
+manually reloading their tab, even after the Storyteller's own reload had already fixed
+things on the wire — nothing re-checked the connection once the banner appeared. Now
+`onStorytellerLeave` starts an 8-second `setTimeout` (cleared on the next
+`onRosterChange`, i.e. as soon as the connection actually recovers) that reloads
+automatically, gated by the same `isModalOpen()`/`pendingElements` guard as above. The
+banner itself also gained a manual "Refresh connection" button (same `location.reload()`
+as the Storyteller's Lobby modal button) for the impatient/guarded-out case.
 
 ## Shared modal system + the seat popup's callback design
 
@@ -388,10 +439,10 @@ src/
                                # aesthetic), with a light variant behind prefers-color-scheme:
                                # light for anyone whose system explicitly asks for it
   types.ts                    # PlayerInfo, HelloPayload, RosterPayload, CharacterAssignPayload,
-                               # NightCardPayload, NightCardElement, NightActionResponsePayload,
-                               # SeatMessage, Character, Script — every NETWORK payload interface
-                               # needs the `[key: string]: JsonValue` index signature (SeatMessage
-                               # doesn't — it's stored/rendered locally, never sent as-is)
+                               # NightCardPayload, NightCardElement, SeatMessage, Character,
+                               # Script — every NETWORK payload interface needs the
+                               # `[key: string]: JsonValue` index signature (SeatMessage doesn't
+                               # — it's stored/rendered locally, never sent as-is)
   data/
     characters.ts              # CHARACTERS: all 22 Trouble Brewing characters (ability,
                                  # clarification, flavor, first/other night text + order,
@@ -418,6 +469,9 @@ src/
     session.ts                      # saveLastSession()/loadLastSession()/clearLastSession() +
                                      # saveLastName()/loadLastName() — see "Seats, reconnect" above
     connection-watchdog.ts           # watchForStaleConnection() — see "Seats, reconnect" above
+    player-local-state.ts            # load/savePlayerFeed(), load/saveTownSquareLocal() — a
+                                      # Player's own local scratch state (feed history, Town
+                                      # Square predictions/notes), see "Seats, reconnect" above
   ui/
     dom.ts                          # el() helper (typed document.createElement + prop assign)
     tabs.ts                         # renderTabs() — shared bottom tab-bar shell; supports a
@@ -471,8 +525,11 @@ src/
                                             # read-only per-seat message log (reads
                                             # handle.getSeatMessages() fresh, no compose box of its
                                             # own anymore), and the night card composer (quick
-                                            # element buttons including "Choose a Player"/"Choose a
-                                            # Character", autofill preset cards, "Player"-picking flow)
+                                            # element buttons, autofill preset cards, "Player"-
+                                            # picking flow). The composer works even for a
+                                            # disconnected seat — the Send button relabels to
+                                            # "Queue card" and turns orange/warning-colored, with an
+                                            # inline warning, when handle.isSeatConnected() is false
       setup-modal.ts                        # openSetupModal() — manual character-pool picker
                                              # (toggle which characters are in play; one summary
                                              # line of running counts, not per-category headers) +
@@ -485,27 +542,36 @@ src/
     join-room/
       index.ts                          # creates the PlayerRoomHandle, compact room header
                                           # (display name inline), shared cross-tab state (the
-                                          # unified feed, own character, latest roster),
-                                          # session-persistence + connection-watchdog wiring, and
-                                          # the tab shell (Night Actions/Town Square/Script — no
+                                          # unified feed — restored from player-local-state.ts on
+                                          # init — own character, latest roster, pendingElements),
+                                          # session-persistence + connection-watchdog wiring (both
+                                          # gated on isModalOpen()/pendingElements), the disconnect
+                                          # banner (manual refresh button + 8s auto-reload timer),
+                                          # and the tab shell (Night Actions/Town Square/Script — no
                                           # top-level roster list, no separate Messages tab)
       night-actions-panel.ts               # own character + ability, the unified feed (see
                                             # "Messages and night cards are unified" below), a
                                             # queueable composer ("Got it" / "Player" via
                                             # openPlayerPicker / custom text, all addable before one
-                                            # Send, mirroring the Storyteller's own composer), and
-                                            # reply controls for choose-prompts
+                                            # Send, mirroring the Storyteller's own composer) —
+                                            # pendingElements lives on shared NightActionsState, not
+                                            # a local variable, so it survives tab switches and can
+                                            # be checked by index.ts's auto-reload guards
       town-square-panel.ts                  # seat circle (layoutInCircle) showing each seat's
                                              # prediction as an icon + name, same visual pattern as
                                              # the Grimoire's actual-character tokens; tapping a
                                              # seat opens a popup (ui/modal.ts) with status, the
                                              # prediction picker (via character-picker.ts), and
                                              # notes — mirrors the Grimoire's "click a seat" pattern.
-                                             # Also exports openPlayerPicker() (a read-only variant
-                                             # of the same circle, used by night-actions-panel.ts's
-                                             # "Player" composer button). Subscribes to
-                                             # onRosterChange itself (live-updates while mounted,
-                                             # not just at mount time)
+                                             # Setting a prediction now refreshes the main circle
+                                             # immediately (previously only the popup refreshed).
+                                             # The distribution summary sits below the circle, not
+                                             # above it. predictions/notes are loaded from and
+                                             # saved to player-local-state.ts. Also exports
+                                             # openPlayerPicker() (a read-only variant of the same
+                                             # circle, used by night-actions-panel.ts's "Player"
+                                             # composer button). Subscribes to onRosterChange itself
+                                             # (live-updates while mounted, not just at mount time)
       script-panel.ts                        # read-only renderScriptView wrapper; also
                                               # subscribes to onRosterChange in case the
                                               # Storyteller changes the script mid-game
@@ -529,20 +595,26 @@ see below), and the Storyteller's per-seat log has no compose box of its own any
 either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely (see
 "The six Trystero actions" above) — everything routes through `nightCard`/`playerCard`.
 
-- **Player side** (`night-actions-panel.ts`): `FeedEntry = {ts, self, elements:
-  NightCardElement[]}`. A plain message is represented as a card with exactly one
-  `text` element — built via the same `nightCardElement()` helper as everything else,
-  so `renderElement()` renders both received night cards and plain messages through
-  identical code. The composer is **queued**, matching the Storyteller's own composer:
-  "Got it," "Player" (opens `town-square-panel.ts`'s `openPlayerPicker()` so the Player
-  picks with the same context — status, their own predictions — visible, rather than a
-  bare list), and custom text all push onto a local `pendingElements` array with a
-  visible remove-able preview (`describeNightCardElement`), and a single "Send"
-  flushes the whole queue via `handle.sendPlayerCard(pendingElements)` — a real
-  structured card over the wire, not text squashed into one string. The `feed` array
-  itself lives in `join-room/index.ts` (screen-lifetime, not persisted) — the
-  Player's own view of past cards does NOT currently survive their own reload (see
-  Known limitations); only the Storyteller's copy of the exchange does.
+- **Player side** (`night-actions-panel.ts`): `NightActionsState.feed` reuses
+  `SeatMessage` (`{ts, self, elements}`) rather than a separate near-identical
+  `FeedEntry` type — one shape for "a per-seat log entry," used by both sides. A plain
+  message is represented as a card with exactly one `text` element — built via the same
+  `nightCardElement()` helper as everything else, so `renderElement()` renders both
+  received night cards and plain messages through identical code. The composer is
+  **queued**, matching the Storyteller's own composer: "Got it," "Player" (opens
+  `town-square-panel.ts`'s `openPlayerPicker()` so the Player picks with the same
+  context — status, their own predictions — visible, rather than a bare list), and
+  custom text all push onto `NightActionsState.pendingElements` with a visible
+  remove-able preview (`describeNightCardElement`), and a single "Send" flushes the
+  whole queue via `handle.sendPlayerCard(...)`. `pendingElements` lives on the shared
+  state object (not a local variable inside `renderNightActionsPanel`) for two reasons:
+  it survives this panel being torn down and recreated on every tab switch (previously
+  it didn't — switching away from Night Actions mid-composition silently lost whatever
+  was queued), and `join-room/index.ts`'s automatic-reload guards can check
+  `nightActionsState.pendingElements.length` before reloading out from under the
+  Player. Both `feed` and Town Square's predictions/notes are now persisted to
+  `localStorage` per Player device via `utils/player-local-state.ts` (see "Seats,
+  reconnect, and persistence" above) — restored on init, re-saved on every mutation.
 - **Storyteller side** (`room.ts`'s `seatMessages: Record<seat, SeatMessage[]>`, NOT a
   UI-layer map anymore): this is the single source of truth, persisted via
   `host-persistence.ts` alongside seats/characterAssignments/seatNotes. Two things feed
@@ -581,15 +653,11 @@ either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely 
 - Storyteller-side reload/crash recovery is same-browser only (plain `localStorage`,
   nothing synced elsewhere) — a Storyteller switching devices mid-game loses all
   seat/character/message state, same as if this feature didn't exist.
-- A night card with more than one `choosePlayer`/`chooseCharacter` prompt only gets one
-  response wired up on the Player's side (see "Night cards" above).
-- Town Square predictions and notes, and a Player's own `feed` (their view of past
-  night cards/messages), are pure in-memory scratch state on the Player's own device —
-  not persisted across the Player's own reload, not sent anywhere. Losing them on
-  accidental reload is an accepted gap (see TODO.md's deferred list). This is separate
-  from the Storyteller's per-seat message log, which now *does* survive both a
-  Player's reconnect and a Storyteller reload (see "Messages and night cards are
-  unified" above) — only the Player's own local copy of the history doesn't.
+- Town Square predictions/notes and a Player's own `feed` are still pure client-side
+  scratch state — never sent anywhere — but as of `utils/player-local-state.ts` they
+  now persist to `localStorage` per device, so they survive that Player's own reload.
+  They do NOT sync across devices (switching phones still starts them fresh), the same
+  limitation as the Storyteller's own `host-persistence.ts`.
 - Character token images hotlink `release.botc.app`'s own asset URLs (a pattern the
   project's own TODO.md suggested) — this is a third-party host we don't control and
   could change its URL scheme without notice; if tokens stop rendering, that's the
@@ -663,8 +731,15 @@ either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely 
     the room code pre-filled.
   - Send a night card combining several element kinds in one message → Player sees
     all of them together, in order, as one card.
-  - Send a `choosePlayer`/`chooseCharacter` prompt → Player's response reaches the
-    Storyteller and is attributed to the right seat.
+  - Send "Make a Choice" from a seat's composer, then have that Player reply with their
+    own night card (via the unified feed's composer, not a special response control —
+    that mechanism was removed) → the reply lands in that seat's message log on the
+    Storyteller's side, attributed correctly.
+  - Open a seat whose device is currently disconnected → the composer's Send button
+    should read "Queue card," be styled orange/warning-colored, and show an inline
+    warning; sending should still work, and the card should reach that seat's device
+    the moment it reconnects (verify it also shows up in the seat's message log
+    immediately, not just after delivery).
   - Setup modal: toggle characters including Baron → outsider count in the running
     tally should read +2 / townsfolk -2 versus the base distribution; "randomize seat
     assignment" should stay disabled until selected count equals seat count.
@@ -728,18 +803,27 @@ either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely 
     plausibly fit without scrolling on a normal desktop window.
   - "This is the Demon"/"These are your Minions" presets should add the player only,
     with no character chip — a Minion shouldn't see the Demon's exact character from
-    this preset. "You are" should add a plain "Good"/"Evil" text plus a Character
-    element that look and behave exactly like clicking those quick buttons manually
-    (removable/editable the same way) — and must NOT reassign the seat's character;
-    only the "Change" button does that.
+    this preset. "You are" should add a "You are" text label, then a plain "Good"/"Evil"
+    text, then a Character element — the Good/Evil/Character elements should look and
+    behave exactly like clicking those quick buttons manually (removable/editable the
+    same way) — and must NOT reassign the seat's character; only the "Change" button
+    does that.
   - "These characters are not in play" should open a picker with every in-play
     character visibly grayed out and unclickable, require picking exactly 3, and the
     Confirm button should stay disabled until exactly 3 are selected.
-  - "Make a Choice" should add only plain text with no interactive prompt; separately,
-    "Choose a Player" and "Choose a Character" should each add their own interactive
-    prompt element, distinct from each other and from "Make a Choice."
+  - "Make a Choice" should add only plain text with no interactive prompt — there is no
+    longer a "Choose a Player"/"Choose a Character" quick button (removed; see "The
+    five Trystero actions" above).
   - Storyteller: open the Lobby modal, click "Refresh connection" → the page should
     reload and the Storyteller should land back in the same room afterward.
+  - Player: with the Storyteller disconnected (close their tab), confirm the banner's
+    "Refresh connection" button works, and separately that leaving it alone for ~8
+    seconds triggers an automatic reload once the Storyteller reconnects (or stays
+    disconnected — either way, verify it does NOT reload while a modal is open or a
+    night card is queued in the composer).
+  - Reload a Player's tab mid-game → besides reclaiming their seat, their own feed
+    (received night cards + sent replies) and any Town Square predictions/notes they'd
+    set should still be there, not reset to empty.
   - A dead Player's own predicted character in Town Square, and an actual assigned
     character in the Grimoire, should each show that character's token icon next to
     the name on the circle — not just plain text.

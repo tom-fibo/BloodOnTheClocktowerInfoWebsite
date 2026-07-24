@@ -1,4 +1,5 @@
 import { el } from '../../ui/dom'
+import { getState } from '../../state/store'
 import type { PlayerRoomHandle } from '../../trystero/room'
 import { getScript } from '../../data/scripts'
 import { suggestDistribution } from '../../game/setup'
@@ -7,6 +8,7 @@ import { openModal, updateModalContent, closeModal } from '../../ui/modal'
 import { getCharacter } from '../../data/characters'
 import { layoutInCircle } from '../../ui/circular-layout'
 import { renderTokenImage } from '../../ui/token-image'
+import { loadTownSquareLocal, saveTownSquareLocal } from '../../utils/player-local-state'
 import type { PlayerInfo } from '../../types'
 
 export interface TownSquareState {
@@ -15,10 +17,22 @@ export interface TownSquareState {
 }
 
 // Predictions and notes are a Player's own private scratchpad about other
-// players — purely local, never sent anywhere, so they reset on reload same as
-// any other unsaved browser state. Keyed by seat number.
-const predictions = new Map<number, string>()
-const notes = new Map<number, string>()
+// players — never sent anywhere, but persisted to this browser's localStorage
+// (keyed by room code) so they survive the Player's own reload. Loaded once
+// at module init: by the time town-square-panel.ts is actually used, the room
+// code is already set in the store (main.ts/join-setup.ts set it before
+// renderJoinRoom runs).
+const roomCodeForLocalState = getState().roomCode
+const storedTownSquare = loadTownSquareLocal(roomCodeForLocalState)
+const predictions = new Map<number, string>(Object.entries(storedTownSquare.predictions).map(([k, v]) => [Number(k), v]))
+const notes = new Map<number, string>(Object.entries(storedTownSquare.notes).map(([k, v]) => [Number(k), v]))
+
+function persistTownSquareLocal(): void {
+  saveTownSquareLocal(roomCodeForLocalState, {
+    predictions: Object.fromEntries(predictions),
+    notes: Object.fromEntries(notes),
+  })
+}
 
 // Shows the Player's own prediction (icon + name), same visual pattern as the
 // Grimoire showing a seat's actual assigned character — "they should see all
@@ -90,7 +104,13 @@ export function renderTownSquarePanel(container: HTMLElement, handle: PlayerRoom
           onSelect: (characterId) => {
             if (characterId) predictions.set(seat.seat, characterId)
             else predictions.delete(seat.seat)
+            persistTownSquareLocal()
+            // Refresh both the popup (new prediction shown there) and the
+            // main circle behind it — previously only the popup refreshed,
+            // so the circle's token stayed stale until the Player switched
+            // tabs away and back.
             openSeatModal(seat)
+            refreshCircle()
           },
         })
       },
@@ -102,7 +122,10 @@ export function renderTownSquarePanel(container: HTMLElement, handle: PlayerRoom
       placeholder: 'Notes about this player…',
       value: notes.get(seat.seat) ?? '',
     })
-    noteInput.addEventListener('input', () => notes.set(seat.seat, noteInput.value))
+    noteInput.addEventListener('input', () => {
+      notes.set(seat.seat, noteInput.value)
+      persistTownSquareLocal()
+    })
 
     const content = el('div', { className: 'seat-modal-card' }, [
       el('button', { className: 'character-popup-close', textContent: '✕', onclick: () => closeModal() }),
@@ -137,8 +160,10 @@ export function renderTownSquarePanel(container: HTMLElement, handle: PlayerRoom
     layoutInCircle(circle)
   }
 
+  // Summary at the bottom, not between the header and the circle — the circle
+  // is the primary content and shouldn't be pushed down by it.
   container.replaceChildren(
-    el('div', { className: 'town-square-panel' }, [el('h2', { textContent: 'Town Square' }), summary, circle]),
+    el('div', { className: 'town-square-panel' }, [el('h2', { textContent: 'Town Square' }), circle, summary]),
   )
 
   refreshSummary()

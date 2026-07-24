@@ -12,6 +12,8 @@
   --accent-contrast: #16141a;
   --danger: #e2574c;
   --danger-bg: #3a1414;
+  --warning: #d98a2b;
+  --warning-bg: #3a2a10;
 
   color-scheme: dark;
   font: 16px/1.45 system-ui, 'Segoe UI', Roboto, sans-serif;
@@ -30,6 +32,8 @@
     --accent-contrast: #fff;
     --danger: #b91c1c;
     --danger-bg: #fee2e2;
+    --warning: #b45309;
+    --warning-bg: #fef3c7;
 
     color-scheme: light;
   }
@@ -196,6 +200,10 @@ button.leave-button {
 }
 
 .disconnect-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   background: var(--danger-bg);
   color: var(--danger);
   padding: 0.6rem 0.8rem;
@@ -324,6 +332,13 @@ button.danger {
   aspect-ratio: 1 / 1;
   margin: 0.25rem auto;
   flex-shrink: 0;
+  /* Tokens are positioned (and translated -50%/-50%) relative to this box's
+     padding edge, and a fixed-size token (92px wide) extends past its own
+     center point in every direction — without this padding, a token whose
+     center sits near 0%/100% overflows past the container's own edge and
+     gets clipped by #app's `overflow: hidden` (visible as seats bleeding off
+     the edge of the screen on narrow/mobile widths). */
+  padding: 3.25rem;
 }
 
 .seat-token {
@@ -487,6 +502,17 @@ button.danger {
 
 .send-card-button {
   margin-top: 0.5rem;
+}
+
+.send-warning-text {
+  color: var(--warning);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0;
+}
+
+.send-card-button-pending {
+  background: var(--warning-bg);
+  color: var(--warning);
 }
 
 /* Notes and sent-card history scroll on their own rather than competing with

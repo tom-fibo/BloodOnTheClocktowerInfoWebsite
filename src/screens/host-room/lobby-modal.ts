@@ -13,16 +13,12 @@ export function openLobbyModal(handle: HostRoomHandle): void {
     return el('div', { className: 'character-picker-card lobby-modal-card' }, [
       el('div', { className: 'character-picker-header' }, [
         el('h2', { textContent: 'Lobby' }),
-        el('button', { className: 'character-popup-close', textContent: '✕', onclick: () => closeModal() }),
-      ]),
-      el('p', { className: 'text-muted' }, [
-        "If a player's connection looks stuck (e.g. the Storyteller shows connected but a player can't see them), ",
         el('button', {
           className: 'secondary',
           textContent: 'Refresh connection',
           onclick: () => location.reload(),
         }),
-        ' reloads this device and rejoins the room the same way the automatic connection watchdog does.',
+        el('button', { className: 'character-popup-close', textContent: '✕', onclick: () => closeModal() }),
       ]),
       el('h3', { textContent: 'Seated' }),
       el(
