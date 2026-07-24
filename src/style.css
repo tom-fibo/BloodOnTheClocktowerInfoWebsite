@@ -327,13 +327,32 @@ button.danger {
    dimensions (min() of a width-based and a height-based cap) so it reads as
    one large circle filling whatever space it has — including a wide
    Storyteller monitor — rather than a small fixed thumbnail. */
+/* Wraps .seat-circle on the Grimoire (not Town Square, which doesn't have
+   this problem — it's a single-column mobile layout without a competing
+   sidebar/notes section) so JS can measure exactly how much room is actually
+   left, rather than guessing with a flat vh percentage. A flat guess (the
+   previous `78vh`) is either too small on a tall/short window ratio it wasn't
+   tuned for, or — as reported — too tall, clipping the bottom row of seats
+   under the tab bar instead of leaving the circle always fully visible per
+   this app's own design intent. See grimoire-panel.ts's resizeCircleToFit(). */
+.grimoire-circle-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
 .seat-circle {
   position: relative;
+  /* Fallback sizing for the instant before JS's first ResizeObserver
+     callback runs — overridden with an explicit pixel width/height by
+     resizeCircleToFit() immediately after. */
   width: 100%;
   max-width: min(100%, 78vh, 760px);
   aspect-ratio: 1 / 1;
   margin: 0.25rem auto;
-  flex-shrink: 0;
   /* Tokens are positioned (and translated -50%/-50%) relative to this box's
      padding edge, and a fixed-size token (92px wide) extends past its own
      center point in every direction — without this padding, a token whose
@@ -594,6 +613,16 @@ button.danger {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 0.25rem;
+}
+
+/* .button-row is shared with the setup/landing screens, where its top margin
+   separates it from text above — wrong here, where it sits beside an <h2> as
+   a flex sibling in a header row. Left in place, that margin (plus
+   align-items: center pulling the shorter <h2> down to match) pushed the
+   whole header row well below where it should sit. */
+.grimoire-tokens-header .button-row,
+.night-order-header .button-row {
+  margin-top: 0;
 }
 
 .picking-banner {

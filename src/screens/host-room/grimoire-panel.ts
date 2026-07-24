@@ -17,6 +17,12 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
   let composerElements: NightCardElement[] = []
   let pickingPlayer = false
   let isFirstNight = true
+  // Two-tap "choose which seats to swap" flow, mirroring the composer's
+  // "Player" picking mode below but entirely separate from it (mutually
+  // exclusive — see the token onclick handler in refreshTokenGrid) since
+  // swapping isn't part of the night-card composer at all.
+  let swappingSeats = false
+  let swapFirstSeat: number | null = null
 
   const pickingBanner = el('div', { className: 'picking-banner hidden' }, [
     el('span', { textContent: 'Tap a seat to add it as a Player…' }),
@@ -31,7 +37,27 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
       },
     }),
   ])
+
+  const swapBannerText = el('span', {})
+  const swapBanner = el('div', { className: 'picking-banner hidden' }, [
+    swapBannerText,
+    el('button', {
+      className: 'secondary',
+      textContent: 'Cancel',
+      onclick: () => {
+        swappingSeats = false
+        swapFirstSeat = null
+        swapBanner.classList.add('hidden')
+        refreshTokenGrid()
+      },
+    }),
+  ])
   const circleContainer = el('div', { className: 'seat-circle' })
+  // Centers the circle and gives resizeCircleToFit() a stable box to measure
+  // — its rendered size already reflects "whatever's left" after the header/
+  // banners/notes above and below it, solved by flexbox, so JS doesn't have
+  // to separately account for each sibling's height by hand.
+  const circleArea = el('div', { className: 'grimoire-circle-area' }, [circleContainer])
   const nightOrderList = el('ol', { className: 'night-order-list' })
   const notesInput = el('textarea', {
     className: 'grimoire-notes-input',
@@ -106,8 +132,9 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
             !seat.alive ? 'dead' : '',
             seat.alive && handle.getDiesTonight(seat.seat) ? 'dying' : '',
             activeSeat === seat.seat ? 'selected' : '',
+            swapFirstSeat === seat.seat ? 'selected' : '',
             seat.peerId === null ? 'disconnected' : '',
-            pickingPlayer ? 'pickable' : '',
+            pickingPlayer || swappingSeats ? 'pickable' : '',
           ]
             .filter(Boolean)
             .join(' '),
@@ -118,6 +145,28 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
               pickingBanner.classList.add('hidden')
               refreshTokenGrid()
               openSeatFor(activeSeat, false)
+              return
+            }
+            if (swappingSeats) {
+              if (swapFirstSeat === null) {
+                swapFirstSeat = seat.seat
+                swapBannerText.textContent = `Tap the seat to swap with ${seat.name}…`
+                refreshTokenGrid()
+                return
+              }
+              if (swapFirstSeat === seat.seat) {
+                // Tapped the same seat again — deselect it rather than
+                // treating that as "swap it with itself" or closing the flow.
+                swapFirstSeat = null
+                swapBannerText.textContent = 'Tap the first seat to swap…'
+                refreshTokenGrid()
+                return
+              }
+              handle.swapSeats(swapFirstSeat, seat.seat)
+              swappingSeats = false
+              swapFirstSeat = null
+              swapBanner.classList.add('hidden')
+              refreshTokenGrid()
               return
             }
             openSeatFor(seat.seat, true)
@@ -135,6 +184,28 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     layoutInCircle(circleContainer)
     revealDeathsButton.disabled = !seats().some((seat) => handle.getDiesTonight(seat.seat))
   }
+
+  // Sizes the circle to exactly whatever space circleArea's flex layout has
+  // actually left it (a fixed square, min of the two dimensions, capped at
+  // 760px) — rather than a flat vh-based guess, which either wasted space or
+  // (as reported) overshot and clipped the bottom row of seats under the tab
+  // bar. Measuring the real box, post-layout, is the only way to get this
+  // exactly right regardless of window size/shape or how much room the
+  // header/banners/notes ended up taking.
+  function resizeCircleToFit(): void {
+    const rect = circleArea.getBoundingClientRect()
+    const size = Math.max(0, Math.min(rect.width, rect.height, 760))
+    if (size === 0) return
+    circleContainer.style.width = `${size}px`
+    circleContainer.style.height = `${size}px`
+  }
+
+  // ResizeObserver (not just a window 'resize' listener) so this also
+  // re-fires when circleArea's available space changes for a reason other
+  // than the window itself resizing — e.g. the header row wrapping to two
+  // lines on a narrower-but-not-resized layout, or the picking/swap banner
+  // toggling visible and eating into the vertical space above the circle.
+  new ResizeObserver(() => resizeCircleToFit()).observe(circleArea)
 
   function refreshNightOrder(): void {
     const steps = deriveNightOrder(characterIdsInPlay(), isFirstNight)
@@ -188,6 +259,26 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     },
   })
 
+  // Two players swapping physical seats mid-game — moves everything about a
+  // seat (name/character/notes/messages/vote token/dies-tonight flag) via the
+  // existing handle.swapSeats(), which already keeps all of that in sync.
+  const swapSeatsButton = el('button', {
+    className: 'secondary',
+    textContent: 'Swap Seats',
+    onclick: () => {
+      // Mutually exclusive with the composer's "Player" picking mode — cancel
+      // that first if it was somehow left active (its own popup is normally
+      // what would have to be closed to reach this button in the first place).
+      pickingPlayer = false
+      pickingBanner.classList.add('hidden')
+      swappingSeats = true
+      swapFirstSeat = null
+      swapBannerText.textContent = 'Tap the first seat to swap…'
+      swapBanner.classList.remove('hidden')
+      refreshTokenGrid()
+    },
+  })
+
   container.replaceChildren(
     el('div', { className: 'grimoire-layout' }, [
       el('div', { className: 'grimoire-main' }, [
@@ -197,11 +288,13 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
             el('button', { className: 'secondary', textContent: 'Lobby', onclick: () => openLobbyModal(handle) }),
             el('button', { className: 'secondary', textContent: '+ Add seat', onclick: () => { handle.addSeat(); refreshTokenGrid() } }),
             el('button', { className: 'secondary', textContent: 'Setup', onclick: () => openSetupModal(handle, () => { refreshTokenGrid(); refreshNightOrder() }) }),
+            swapSeatsButton,
             revealDeathsButton,
           ]),
         ]),
         pickingBanner,
-        circleContainer,
+        swapBanner,
+        circleArea,
         // Deliberately scrollable rather than fighting for space with the
         // circle above — the circle should always be fully visible; notes
         // scrolling is an accepted tradeoff. Sent cards live per-seat now

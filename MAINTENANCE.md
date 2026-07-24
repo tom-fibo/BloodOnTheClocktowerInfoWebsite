@@ -258,6 +258,32 @@ turns into a harmless no-op update to a detached DOM node, which is an acceptabl
 inefficiency for a single Storyteller/Player device switching tabs a normal number of
 times per game, not a correctness issue.
 
+**Registration order matters within a Set, and this shipped broken because of it:**
+a `Set`'s callbacks fire in insertion order, not sorted or prioritized in any way. On
+the Player side, `join-room/index.ts` registers session-lifetime listeners that
+*mutate* `nightActionsState`/`townSquareState` (e.g. `onCharacterAssign` sets
+`myCharacterId`), while `night-actions-panel.ts` registers its own listener on the
+same events purely to *re-render* using that state (`onCharacterAssign(() =>
+refreshCharacter())`). If the panel's listener ends up registered before `index.ts`'s,
+an event arriving while that panel happens to already be mounted fires the render
+BEFORE the state mutation — the panel draws the stale value, and nothing re-renders it
+afterward (the render was a one-shot reaction to that specific event, not something
+that re-checks state later). The only way to see the correct value was to switch tabs
+away and back, forcing a fresh mount that reads the by-then-updated state at mount
+time. This is exactly what happened: `renderTabs()` (called inside `renderJoinRoom`)
+mounts the initial (default) tab **synchronously**, so if the panel's mount — and
+therefore its own listener registration — happens before `index.ts`'s own
+`handle.onCharacterAssign(...)`/`handle.onNightCard(...)`/`handle.onRosterChange(...)`
+calls textually appear later in the function, the panel's listener ends up first in
+each Set. The fix was purely a reordering: `join-room/index.ts` now registers all of
+its own state-updating listeners **before** calling `renderTabs()`. Since Night
+Actions is the default/first tab and gets mounted synchronously inside that call, this
+guarantees `index.ts`'s listener is always earlier in each Set's iteration order, so
+the shared state is current by the time any panel's own listener runs. If you add
+another cross-tab shared-state field to either room screen, register its updater
+before `renderTabs()` for the same reason — don't assume "I registered my listener at
+mount time" is early enough just because the panel is the one currently on screen.
+
 **The one timing rule that matters:** `hello` must never be sent as a blind broadcast
 immediately after `joinRoom()` returns — at that instant no peer connections exist yet,
 so the message would be silently lost. `room.onPeerJoin` firing for a peerId is what
@@ -495,6 +521,57 @@ was tapped instead of opening that seat's popup, then clears the flag and reopen
 banner — this was the second bug this feature shipped with; if you touch this flow,
 verify both the "successfully picked a seat" and "Cancel" paths reset picking state.
 
+"Swap Seats" is a second, structurally identical two-tap picking mode
+(`swappingSeats`/`swapFirstSeat`, its own `swapBanner`) for the case of two players
+physically swapping chairs mid-game — tap the button, tap two seats, `handle.
+swapSeats(a, b)` fires (already handles moving name/character/notes/messages/vote
+token/dies-tonight together — see `room.ts`). Tapping the same seat twice in a row
+deselects it rather than swapping a seat with itself or silently closing the flow.
+Deliberately NOT unified with `pickingPlayer` into one generic "picking mode" even
+though the token-click branching looks similar, because the two modes do genuinely
+different things with the tapped seat (push a composer element vs. call
+`swapSeats`) and have independent banners — the `swapSeatsButton` handler explicitly
+cancels `pickingPlayer` first as a safety measure, but the two flows don't otherwise
+share state.
+
+### Sizing the Grimoire's circle to the actual available space, not a guessed vh%
+
+`.seat-circle`'s size used to be a pure-CSS `max-width: min(100%, 78vh, 760px)` guess.
+This shipped broken (again) in real testing: on some window shapes it overshot the
+space actually left after the header/button row/banners above and the notes section
+below, clipping the bottom row of seats under the tab bar — directly contradicting
+this app's own stated design intent that "the circle should always be fully visible;
+notes scrolling is an accepted tradeoff" (see "Fit-to-screen layout" in TODO.md). A
+flat vh percentage can't know how much room siblings actually took; only the browser's
+own layout engine knows that, so `grimoire-panel.ts` now measures it directly:
+`circleContainer` sits inside a wrapper, `circleArea` (`.grimoire-circle-area`, `flex:
+1; min-height: 0; display: flex; align-items: center; justify-content: center;`),
+whose *rendered* box already reflects "whatever space flexbox left after every
+sibling claimed its own height" — exactly the number we need, without hand-computing
+each sibling's height in JS. `resizeCircleToFit()` reads `circleArea.
+getBoundingClientRect()` and sets `circleContainer`'s width/height (inline, in px) to
+`min(rect.width, rect.height, 760)`, kept square regardless of the wrapper's own
+aspect ratio. A `ResizeObserver` on `circleArea` (not a plain window `resize`
+listener) re-runs this any time that available space changes for *any* reason — the
+window resizing, the header wrapping to two lines, a picking/swap banner toggling
+visible — not just viewport dimension changes. The CSS `max-width: min(100%, 78vh,
+760px)` is kept as a fallback only for the brief instant before the first
+`ResizeObserver` callback fires; don't rely on it for real sizing, and don't try to
+replace this with a better CSS-only percentage — the whole point is that no fixed
+percentage can be correct for every combination of window shape and however much
+vertical space the header/notes end up taking.
+
+A related, smaller bug in the same area: the Grimoire's own header row (the `<h2>`
+next to the Lobby/Setup/etc. buttons) had a large, wrong-looking gap above it. Cause:
+the buttons sit in a `.button-row` div — a class shared with the setup/landing
+screens, where a `margin-top` separates it from body text above. Reused here as a
+flex sibling of an `<h2>` in a header row, that margin (combined with `align-items:
+center` pulling the shorter `<h2>` down to match the button row's taller margin-box)
+pushed the entire header down. Fixed with a scoped override (`.grimoire-tokens-header
+.button-row, .night-order-header .button-row { margin-top: 0; }`) rather than
+touching the shared `.button-row` rule itself, which the setup/landing screens still
+rely on.
+
 `ui/character-picker.ts` exports two variants, plus the Setup modal has its own
 third, separate grid (`screens/host-room/setup-modal.ts`) — all three render a grid of
 character tokens, but each has a genuinely different interaction, so they aren't
@@ -598,16 +675,18 @@ src/
                                           # message state itself — that all lives in room.ts now.
       grimoire-panel.ts                   # seat circle (layoutInCircle, with an unread-dot per
                                            # seat, a .dying gray-slash class for a "dies tonight"
-                                           # seat, a no-vote purple-circle overlay), a "Lobby" button
-                                           # (lobby-modal.ts), a "Reveal deaths" button
-                                           # (handle.revealAllDeaths(), disabled when nothing is
-                                           # flagged), night-order sidebar (two-column on wide
-                                           # screens), general notes below the fold (no audit log
-                                           # section anymore — sent cards live in each seat's own
-                                           # popup); owns activeSeat/composerElements/pickingPlayer
-                                           # state and opens seat-modal.ts's content into
-                                           # ui/modal.ts; calls handle.markSeatRead() whenever a seat
-                                           # is opened
+                                           # seat, a no-vote purple-circle overlay), sized dynamically
+                                           # by resizeCircleToFit() (see below) rather than a flat vh
+                                           # guess, a "Lobby" button (lobby-modal.ts), a "Swap Seats"
+                                           # button (tap-two-seats picking mode, handle.swapSeats()),
+                                           # a "Reveal deaths" button (handle.revealAllDeaths(),
+                                           # disabled when nothing is flagged), night-order sidebar
+                                           # (two-column on wide screens), general notes below the
+                                           # fold (no audit log section anymore — sent cards live in
+                                           # each seat's own popup); owns activeSeat/composerElements/
+                                           # pickingPlayer/swappingSeats state and opens seat-modal.ts's
+                                           # content into ui/modal.ts; calls handle.markSeatRead()
+                                           # whenever a seat is opened
       seat-modal.ts                        # buildSeatModalContent() — per-seat popup, a two-column
                                             # layout (game state left, messages + night card
                                             # composer right) on wide screens: rename/remove,
@@ -925,3 +1004,35 @@ either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely 
   - A dead Player's own predicted character in Town Square, and an actual assigned
     character in the Grimoire, should each show that character's token icon next to
     the name on the circle — not just plain text.
+  - Have a Player "Leave Room" and rejoin (same name/room code) while looking at the
+    default Night Actions tab the whole time → "Your Character" and a just-arrived
+    night card should both appear immediately, without needing to switch tabs away
+    and back (this is the registration-order race described above — regression-test
+    it specifically, since re-adding a cross-tab shared-state listener after
+    `renderTabs()` instead of before would silently reintroduce it).
+  - Storyteller: send a night card to a seat while it's disconnected (queued), then
+    have that Player reconnect → the card should arrive with its actual content
+    intact, not blank (this is the array-mutation bug described above). Also check
+    the Storyteller's own message log for that seat still shows the card's real
+    content, not an empty entry, after sending it (even to a connected seat).
+  - Storyteller: set a seat's "Dies tonight" flag → its Grimoire token should show a
+    gray diagonal slash (not the full grayscale death shroud), and it should stay
+    invisible to that Player (no way to detect it from the Player's own screens or
+    network traffic). Press "Reveal deaths" → the flag clears and the seat becomes
+    fully dead (shroud, `alive: false` on the Player's own Town Square/Grimoire view).
+  - Storyteller: click "Swap Seats," tap two seats → everything about each seat
+    (name, character, notes, message log, vote token, dies-tonight flag) should trade
+    places; tapping the same seat twice should deselect it, not swap it with itself.
+  - Toggle a seat's Alive/Vote token/Dies tonight buttons → each should visually
+    reflect its active state immediately and take noticeably less vertical space than
+    the previous checkbox+label rows.
+  - A seat with no vote token should show a small purple circle centered on its token
+    image, on both the Grimoire and Town Square — check it also renders correctly
+    stacked with a dead seat's grayscale shroud (a dead seat with no vote token is the
+    common case, not an edge case).
+  - The Storyteller's per-seat message log (inside a seat's popup) should show the
+    most recently sent/received card at the top, not the bottom.
+  - Resize the Storyteller's browser window (or check on both a short laptop screen
+    and a tall desktop monitor) → the Grimoire's seat circle should always be fully
+    visible with no seats clipped under the tab bar, and there should be no large gap
+    between the room header and the "Grimoire" heading/button row.

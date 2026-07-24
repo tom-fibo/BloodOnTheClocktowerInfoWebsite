@@ -1,7 +1,7 @@
 import { el } from '../../ui/dom'
 import { getState, setState } from '../../state/store'
 import { joinPlayerRoom } from '../../trystero/room'
-import { renderTabs } from '../../ui/tabs'
+import { renderTabs, type TabsHandle } from '../../ui/tabs'
 import { DEFAULT_SCRIPT_ID } from '../../data/scripts'
 import { saveLastSession, clearLastSession, saveLastName } from '../../utils/session'
 import { watchForStaleConnection } from '../../utils/connection-watchdog'
@@ -73,12 +73,19 @@ export function renderJoinRoom(container: HTMLElement): void {
     ]),
   )
 
-  const tabsShell = container.querySelector<HTMLDivElement>('.tabs-shell')!
-  const tabsHandle = renderTabs(tabsShell, [
-    { id: 'night-actions', label: 'Night Actions', render: (c) => renderNightActionsPanel(c, handle, nightActionsState) },
-    { id: 'town-square', label: 'Town Square', render: (c) => renderTownSquarePanel(c, handle, townSquareState) },
-    { id: 'script', label: 'Script', render: (c) => renderScriptPanel(c, handle, townSquareState.scriptId) },
-  ])
+  // These must be registered BEFORE renderTabs() mounts the initial panel
+  // below. onX callbacks fire in registration order (Set insertion order —
+  // see trystero/room.ts's listener-Set comment), and the Night Actions panel
+  // registers its OWN onCharacterAssign/onNightCard/onRosterChange to trigger
+  // a re-render. If these state-updating callbacks were registered second (as
+  // they used to be, right after renderTabs), an event arriving while that
+  // panel was already mounted would render BEFORE nightActionsState/
+  // townSquareState were updated — the panel would draw the stale value (e.g.
+  // "No character assigned yet") and nothing would re-render it afterward,
+  // until the user switched tabs away and back and the panel re-mounted fresh
+  // against the by-then-correct state. Registering these first guarantees the
+  // shared state is always current by the time any panel's own listener runs.
+  let tabsHandle: TabsHandle | undefined
 
   handle.onRosterChange((players, _storytellerId, scriptId) => {
     nightActionsState.latestRoster = players
@@ -107,8 +114,15 @@ export function renderJoinRoom(container: HTMLElement): void {
   handle.onNightCard((card) => {
     nightActionsState.feed.push({ ts: card.ts, self: false, elements: card.elements })
     savePlayerFeed(roomCode, nightActionsState.feed)
-    tabsHandle.setBadge('night-actions', true)
+    tabsHandle?.setBadge('night-actions', true)
   })
+
+  const tabsShell = container.querySelector<HTMLDivElement>('.tabs-shell')!
+  tabsHandle = renderTabs(tabsShell, [
+    { id: 'night-actions', label: 'Night Actions', render: (c) => renderNightActionsPanel(c, handle, nightActionsState) },
+    { id: 'town-square', label: 'Town Square', render: (c) => renderTownSquarePanel(c, handle, townSquareState) },
+    { id: 'script', label: 'Script', render: (c) => renderScriptPanel(c, handle, townSquareState.scriptId) },
+  ])
 
   nameInput.addEventListener('change', () => {
     const name = nameInput.value.trim()
