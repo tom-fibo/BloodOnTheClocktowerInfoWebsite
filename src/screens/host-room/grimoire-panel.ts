@@ -232,9 +232,9 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
   // box and requiring a scroll (see grimoireMain's comment in style.css) — a
   // seat token overlapping another is worse than a scrollbar.
   function resizeCircleToFit(): void {
-    const mainRect = grimoireMain.getBoundingClientRect()
+    const bottomRect = (el('nav', { className: 'tab-bar' })).getBoundingClientRect()
     const areaRect = circleArea.getBoundingClientRect()
-    const availableHeight = mainRect.bottom - areaRect.top
+    const availableHeight = bottomRect.top - areaRect.top
     const size = Math.max(minCircleSize(seats().length), Math.min(areaRect.width, availableHeight))
     if (size <= 0) return
     circleContainer.style.width = `${size}px`
