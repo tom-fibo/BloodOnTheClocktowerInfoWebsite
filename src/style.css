@@ -341,7 +341,11 @@ button.danger {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  /* Deliberately NOT overflow: hidden — resizeCircleToFit() enforces a
+     seat-count-aware minimum size so tokens never overlap, and if that
+     minimum is bigger than the space actually available here, the circle
+     needs to be able to spill out and let .tab-content's own overflow-y:auto
+     provide a scrollbar, rather than silently clipping seats out of view. */
 }
 
 .seat-circle {
@@ -980,9 +984,19 @@ button.danger {
 
 /* Newspaper-style CSS columns across the WHOLE script (not per-group) so a
    group's tail and the next group's head can share a column — closer to the
-   official script PDF's compact, no-scroll layout than a fixed grid is. */
+   official script PDF's compact, no-scroll layout than a fixed grid is.
+   `columns` here is an IDEAL width, not a fixed one — the browser stretches
+   columns wider to exactly fill the container once it settles on a column
+   count. That column count is also capped by how many `.script-group`s exist
+   (4, and each must stay in one column via break-inside: avoid-column), so a
+   narrow ideal width (280px) computed room for more columns than there was
+   content to fill on a wide monitor — those extra columns just sat empty
+   instead of the existing ones stretching to use that width, wasting space
+   and forcing more text-wrapping (taller layout) than necessary. A wider
+   ideal caps the column count lower to begin with, so the columns that DO
+   get used are correspondingly wider. */
 .script-columns {
-  columns: 280px;
+  columns: 420px;
   column-gap: 2rem;
 }
 
@@ -1276,5 +1290,12 @@ button.danger {
 .town-square-summary {
   color: var(--text-muted);
   font-size: 0.85rem;
-  margin: 0;
+  /* layoutInCircle's tokens are position:absolute (so they don't contribute
+     to .town-square-circle's own flow height) and, for an EVEN seat count,
+     one seat always lands exactly at the bottom of the circle (odd counts
+     only ever get close) — the worst case for how far a token's box reaches
+     below the circle's own edge. Margin-top gives this element clearance for
+     that worst case regardless of parity, rather than relying on the
+     circle's padding alone. */
+  margin: 0.75rem 0 0;
 }

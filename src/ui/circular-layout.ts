@@ -1,3 +1,9 @@
+// Exported so anything that needs to reason about the circle's geometry (e.g.
+// grimoire-panel.ts's minimum-size-to-avoid-overlap calculation) derives it
+// from the same number laid out here, rather than a second hardcoded copy
+// that could silently drift out of sync if this one is ever retuned.
+export const CIRCLE_RADIUS_PERCENT = 42
+
 // Arranges a container's direct children evenly around a circle, matching the
 // physical Town Square seating this is standing in for. Percentage-based
 // positions are relative to the container's own box, so the container must be
@@ -7,7 +13,7 @@ export function layoutInCircle(container: HTMLElement): void {
   const n = items.length
   if (n === 0) return
 
-  const radius = n < 2 ? 0 : 42
+  const radius = n < 2 ? 0 : CIRCLE_RADIUS_PERCENT
   items.forEach((item, i) => {
     const angle = (i / n) * 2 * Math.PI - Math.PI / 2
     const x = 50 + radius * Math.cos(angle)

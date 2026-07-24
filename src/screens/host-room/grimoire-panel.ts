@@ -3,7 +3,7 @@ import type { HostRoomHandle } from '../../trystero/room'
 import { getCharacter } from '../../data/characters'
 import { attachCharacterTrigger } from '../../ui/character-popup'
 import { openModal, updateModalContent, closeModal } from '../../ui/modal'
-import { layoutInCircle } from '../../ui/circular-layout'
+import { layoutInCircle, CIRCLE_RADIUS_PERCENT } from '../../ui/circular-layout'
 import { deriveNightOrder } from '../../game/night-order'
 import { nightCardElement } from '../../game/night-card'
 import { renderTokenImage } from '../../ui/token-image'
@@ -183,6 +183,28 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     circleContainer.replaceChildren(...tokens)
     layoutInCircle(circleContainer)
     revealDeathsButton.disabled = !seats().some((seat) => handle.getDiesTonight(seat.seat))
+    // Seat count affects the minimum non-overlapping circle size (more seats
+    // need more circumference) — recompute whenever it changes, not just
+    // when circleArea's own box resizes.
+    resizeCircleToFit()
+  }
+
+  // Matches .seat-token's CSS width — kept here rather than read from the DOM
+  // since it's only needed for this one calculation and doesn't change.
+  const TOKEN_WIDTH_PX = 92
+  const MIN_TOKEN_GAP_PX = 12
+
+  // The smallest square the circle can be without two adjacent tokens
+  // visually overlapping, for the given seat count. Inverts
+  // circular-layout.ts's own chord-length math (adjacent-token distance = 2 *
+  // radius * sin(pi / n), radius = CIRCLE_RADIUS_PERCENT% of the container
+  // size) to solve for the container size that keeps that chord at least
+  // TOKEN_WIDTH_PX + MIN_TOKEN_GAP_PX.
+  function minCircleSize(seatCount: number): number {
+    if (seatCount < 2) return 0
+    const neededChord = TOKEN_WIDTH_PX + MIN_TOKEN_GAP_PX
+    const radiusFraction = CIRCLE_RADIUS_PERCENT / 100
+    return neededChord / (2 * radiusFraction * Math.sin(Math.PI / seatCount))
   }
 
   // Sizes the circle to exactly whatever space circleArea's flex layout has
@@ -191,10 +213,13 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
   // (as reported) overshot and clipped the bottom row of seats under the tab
   // bar. Measuring the real box, post-layout, is the only way to get this
   // exactly right regardless of window size/shape or how much room the
-  // header/banners/notes ended up taking.
+  // header/banners/notes ended up taking. Never goes below minCircleSize(),
+  // even if that means overflowing circleArea and requiring a scroll (see
+  // .grimoire-circle-area's comment in style.css) — a seat token overlapping
+  // another is worse than a scrollbar.
   function resizeCircleToFit(): void {
     const rect = circleArea.getBoundingClientRect()
-    const size = Math.max(0, Math.min(rect.width, rect.height, 760))
+    const size = Math.max(minCircleSize(seats().length), Math.min(rect.width, rect.height, 760))
     if (size === 0) return
     circleContainer.style.width = `${size}px`
     circleContainer.style.height = `${size}px`

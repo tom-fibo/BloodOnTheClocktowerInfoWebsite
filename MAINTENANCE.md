@@ -561,6 +561,31 @@ replace this with a better CSS-only percentage — the whole point is that no fi
 percentage can be correct for every combination of window shape and however much
 vertical space the header/notes end up taking.
 
+**`resizeCircleToFit()` shrinking the circle this freely shipped its own bug:** with no
+floor, a cramped window could shrink the circle below the point where adjacent seat
+tokens' fixed-width (92px) boxes started visually overlapping each other — sizing
+"whatever fits" is only correct down to the point where fitting starts costing
+correctness. Fixed with `minCircleSize(seatCount)`, which inverts
+`circular-layout.ts`'s own placement math to find the smallest square that keeps
+adjacent tokens apart: `layoutInCircle()` places seat `i` of `n` at radius
+`CIRCLE_RADIUS_PERCENT`% (now exported from `circular-layout.ts` specifically so this
+calculation can't silently drift out of sync with a second hardcoded copy if the
+radius is ever retuned again), so the chord distance between adjacent token centers is
+`2 * radius_px * sin(pi / n)` — solving that for the container size that keeps the
+chord at least `TOKEN_WIDTH_PX + MIN_TOKEN_GAP_PX` gives the minimum.
+`resizeCircleToFit()` takes `Math.max(minCircleSize(...), Math.min(rect.width,
+rect.height, 760))` — i.e. the measured "available space" size, but never below the
+overlap-free floor. `refreshTokenGrid()` also calls `resizeCircleToFit()` directly
+(not just relying on the `ResizeObserver`), since adding/removing a seat changes the
+minimum without necessarily changing `circleArea`'s own box size, which is the only
+thing the observer reacts to. When the floor is bigger than the actually-available
+space, the circle deliberately overflows `circleArea` rather than clipping — this is
+why `.grimoire-circle-area` dropped its `overflow: hidden`: an ancestor further up
+(`.tab-content`) already has `overflow-y: auto`, so an oversized circle just makes the
+page scrollable to it instead of hiding seats. A scrollbar is an acceptable tradeoff
+here in a way silent overlap never was — the whole point was to make overlap
+structurally impossible, not just less likely.
+
 A related, smaller bug in the same area: the Grimoire's own header row (the `<h2>`
 next to the Lobby/Setup/etc. buttons) had a large, wrong-looking gap above it. Cause:
 the buttons sit in a `.button-row` div — a class shared with the setup/landing
@@ -648,7 +673,9 @@ src/
                                       # purple-circle overlay, concentric with the token
     circular-layout.ts                # layoutInCircle() — positions a container's children
                                        # evenly around a circle (Grimoire + Town Square seating);
-                                       # container must be square (aspect-ratio: 1)
+                                       # container must be square (aspect-ratio: 1). Exports
+                                       # CIRCLE_RADIUS_PERCENT so grimoire-panel.ts's minimum-size
+                                       # calculation derives from the same number, not a second copy
     qr-code.ts                        # renderQrCode(url) via qrcode-generator
     character-popup.ts                 # openCharacterPopup(), attachCharacterTrigger() — full
                                         # modal + desktop hover tooltip, used everywhere a
@@ -659,9 +686,11 @@ src/
                                          # NOT shared with Setup's own grid — see "Shared modal
                                          # system" above for why all three stay separate
     script-view.ts                      # renderScriptView() — shared character-list-by-type
-                                         # renderer (ability text inline, CSS-column layout, plus
-                                         # the 5-15+ player distribution table) used by both
-                                         # roles' Script panels
+                                         # renderer (ability text inline, CSS-column layout — ideal
+                                         # column width 420px, not a fixed one, see .script-columns
+                                         # in style.css for why that number matters — plus the
+                                         # 5-15+ player distribution table) used by both roles'
+                                         # Script panels
   screens/
     landing.ts, host-setup.ts, join-setup.ts     # unchanged single-screen flows (join-setup.ts
                                                   # now also pre-fills the name field from
@@ -676,8 +705,9 @@ src/
       grimoire-panel.ts                   # seat circle (layoutInCircle, with an unread-dot per
                                            # seat, a .dying gray-slash class for a "dies tonight"
                                            # seat, a no-vote purple-circle overlay), sized dynamically
-                                           # by resizeCircleToFit() (see below) rather than a flat vh
-                                           # guess, a "Lobby" button (lobby-modal.ts), a "Swap Seats"
+                                           # by resizeCircleToFit() with a seat-count-aware minimum
+                                           # (see "Sizing the Grimoire's circle" above) rather than a
+                                           # flat vh guess, a "Lobby" button (lobby-modal.ts), a "Swap Seats"
                                            # button (tap-two-seats picking mode, handle.swapSeats()),
                                            # a "Reveal deaths" button (handle.revealAllDeaths(),
                                            # disabled when nothing is flagged), night-order sidebar
@@ -740,7 +770,8 @@ src/
                                              # Setting a prediction now refreshes the main circle
                                              # immediately (previously only the popup refreshed).
                                              # The distribution summary sits below the circle, not
-                                             # above it. predictions/notes are loaded from and
+                                             # above it, with enough margin-top to clear an even seat
+                                             # count's bottom-most token. predictions/notes are loaded from and
                                              # saved to player-local-state.ts. Also exports
                                              # openPlayerPicker() (a read-only variant of the same
                                              # circle, used by night-actions-panel.ts's "Player"
@@ -1036,3 +1067,16 @@ either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely 
     and a tall desktop monitor) → the Grimoire's seat circle should always be fully
     visible with no seats clipped under the tab bar, and there should be no large gap
     between the room header and the "Grimoire" heading/button row.
+  - Shrink the Storyteller's window to something quite cramped with several seats
+    added → the Grimoire's seat tokens should never visually overlap each other; if
+    the window is too small to show the whole circle at its overlap-free minimum
+    size, the page should become scrollable rather than clipping any seats out of
+    view or letting them overlap.
+  - Player: check Town Square with both an even and an odd seat count → the
+    distribution summary text below the circle should never overlap the bottom-most
+    seat token in either case (the even case is the one that previously failed,
+    since it's the only one where a seat lands exactly at the circle's bottom).
+  - Player/Storyteller: open the Script tab on a wide desktop window → the character
+    columns should visibly stretch to use most of the available width (not stay
+    narrow with a large empty gap to one side), and the whole script should need
+    less vertical scrolling than before as a result.
