@@ -335,17 +335,23 @@ button.danger {
    tuned for, or — as reported — too tall, clipping the bottom row of seats
    under the tab bar instead of leaving the circle always fully visible per
    this app's own design intent. See grimoire-panel.ts's resizeCircleToFit(). */
+/* Deliberately NOT flex: 1 / min-height: 0 — this used to compete equally
+   with .grimoire-below-fold (notes) for whatever space flexbox decided to
+   split between them, which let notes squeeze the circle down arbitrarily
+   small (both had min-height: 0, so nothing stopped the split). The circle's
+   size is instead driven entirely by its own content (circleContainer's
+   explicit inline width/height, set by resizeCircleToFit()) — flex: none
+   just means this wrapper takes exactly that size, never stretched or
+   shrunk by the flex column around it. If that size is bigger than the room
+   .grimoire-main actually has left after the header/notes, this wrapper (and
+   its content) simply extends past grimoire-main's own box — which is fine,
+   since .grimoire-main itself now scrolls to reveal whatever doesn't fit,
+   rather than the circle ever being squeezed. */
 .grimoire-circle-area {
-  flex: 1;
-  min-height: 0;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Deliberately NOT overflow: hidden — resizeCircleToFit() enforces a
-     seat-count-aware minimum size so tokens never overlap, and if that
-     minimum is bigger than the space actually available here, the circle
-     needs to be able to spill out and let .tab-content's own overflow-y:auto
-     provide a scrollbar, rather than silently clipping seats out of view. */
 }
 
 .seat-circle {
@@ -596,12 +602,12 @@ button.danger {
   color: var(--warning);
 }
 
-/* Notes and sent-card history scroll on their own rather than competing with
-   the circle above for space — the circle should always be fully visible. */
+/* Notes render at their natural (small, fixed-rows-textarea) height rather
+   than being squeezed — .grimoire-main scrolling as a whole is what handles
+   not having room for both the circle and this, not this section shrinking
+   or scrolling on its own. */
 .grimoire-below-fold {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+  flex: none;
 }
 
 .grimoire-notes {
@@ -713,14 +719,20 @@ button.danger {
   min-height: 0;
 }
 
-/* Flex column so the circle (fixed-size, via .seat-circle's flex-shrink: 0)
-   is always fully shown, and only .grimoire-below-fold scrolls if it doesn't
-   all fit — never the circle itself. */
+/* Flex column, and a scroll container in its own right: the circle
+   (grimoire-circle-area) is sized explicitly by JS (resizeCircleToFit(), not
+   flex distribution — see its comment), so it never competes for space with
+   grimoire-below-fold (notes) below it. If the circle's own size (bounded
+   below by a seat-count-aware overlap-free minimum) plus the header/notes
+   ends up taller than this box, that overflow scrolls here rather than
+   squeezing the circle — notes are the thing that's fine to scroll to reach,
+   not the circle itself. */
 .grimoire-main {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .grimoire-sidebar {

@@ -23,6 +23,13 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
   // swapping isn't part of the night-card composer at all.
   let swappingSeats = false
   let swapFirstSeat: number | null = null
+  // Assigned once, further down, once its own children exist — declared here
+  // (rather than at that point) so resizeCircleToFit(), defined earlier in
+  // this function but only ever CALLED after the assignment below runs, can
+  // close over it without a "used before its declaration" error. The `!` is
+  // a definite-assignment assertion: TS can't statically prove the closure
+  // only runs after the assignment below, but it does.
+  let grimoireMain!: HTMLElement
 
   const pickingBanner = el('div', { className: 'picking-banner hidden' }, [
     el('span', { textContent: 'Tap a seat to add it as a Player…' }),
@@ -53,10 +60,9 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     }),
   ])
   const circleContainer = el('div', { className: 'seat-circle' })
-  // Centers the circle and gives resizeCircleToFit() a stable box to measure
-  // — its rendered size already reflects "whatever's left" after the header/
-  // banners/notes above and below it, solved by flexbox, so JS doesn't have
-  // to separately account for each sibling's height by hand.
+  // Just centers circleContainer — sizing is entirely resizeCircleToFit()'s
+  // job now (see below), not flexbox distribution, so this wrapper's own box
+  // is simply whatever circleContainer's explicit size ends up being.
   const circleArea = el('div', { className: 'grimoire-circle-area' }, [circleContainer])
   const nightOrderList = el('ol', { className: 'night-order-list' })
   const notesInput = el('textarea', {
@@ -207,30 +213,43 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     return neededChord / (2 * radiusFraction * Math.sin(Math.PI / seatCount))
   }
 
-  // Sizes the circle to exactly whatever space circleArea's flex layout has
-  // actually left it (a fixed square, min of the two dimensions, capped at
-  // 760px) — rather than a flat vh-based guess, which either wasted space or
-  // (as reported) overshot and clipped the bottom row of seats under the tab
-  // bar. Measuring the real box, post-layout, is the only way to get this
-  // exactly right regardless of window size/shape or how much room the
-  // header/banners/notes ended up taking. Never goes below minCircleSize(),
-  // even if that means overflowing circleArea and requiring a scroll (see
-  // .grimoire-circle-area's comment in style.css) — a seat token overlapping
-  // another is worse than a scrollbar.
+  // Sizes the circle to whatever space is actually available above the
+  // notes section, prioritizing the circle over notes rather than splitting
+  // the space evenly between them — a flat vh-based guess either wasted
+  // space or (as reported) overshot and clipped seats under the tab bar, and
+  // a naive "both get flex: 1" split let notes squeeze the circle down
+  // arbitrarily small (both were willing to shrink to 0). Available height is
+  // `grimoireMain`'s own bottom edge minus circleArea's top edge — NOT
+  // circleArea's own height, which would be circular (its height is a
+  // function of circleContainer's size, which is what we're about to set).
+  // grimoireMain's own box is fixed by the outer row layout regardless of
+  // how much its children's content actually needs, and circleArea's top
+  // position only depends on the header/banners above it (unaffected by our
+  // own writes) — so neither number depends on what this function just did
+  // last time it ran, which is what keeps this convergent rather than
+  // fighting with itself across repeated calls. Never goes below
+  // minCircleSize(), even if that means overflowing past grimoireMain's own
+  // box and requiring a scroll (see grimoireMain's comment in style.css) — a
+  // seat token overlapping another is worse than a scrollbar.
   function resizeCircleToFit(): void {
-    const rect = circleArea.getBoundingClientRect()
-    const size = Math.max(minCircleSize(seats().length), Math.min(rect.width, rect.height, 760))
-    if (size === 0) return
+    const mainRect = grimoireMain.getBoundingClientRect()
+    const areaRect = circleArea.getBoundingClientRect()
+    const availableHeight = mainRect.bottom - areaRect.top
+    const size = Math.max(minCircleSize(seats().length), Math.min(areaRect.width, availableHeight, 760))
+    if (size <= 0) return
     circleContainer.style.width = `${size}px`
     circleContainer.style.height = `${size}px`
   }
 
-  // ResizeObserver (not just a window 'resize' listener) so this also
-  // re-fires when circleArea's available space changes for a reason other
-  // than the window itself resizing — e.g. the header row wrapping to two
-  // lines on a narrower-but-not-resized layout, or the picking/swap banner
-  // toggling visible and eating into the vertical space above the circle.
-  new ResizeObserver(() => resizeCircleToFit()).observe(circleArea)
+  // ResizeObserver on grimoireMain (not circleArea, which we ourselves
+  // resize — observing what you write to risks fighting yourself in a loop)
+  // catches every reason its available space can change: the window
+  // resizing, the header row wrapping to two lines, a picking/swap banner
+  // toggling visible. Banner/seat-count changes also call resizeCircleToFit()
+  // directly (see refreshTokenGrid() and the banner toggle sites) since
+  // those don't necessarily change grimoireMain's own box size for the
+  // observer to react to.
+  new ResizeObserver(() => resizeCircleToFit()).observe(grimoireMain)
 
   function refreshNightOrder(): void {
     const steps = deriveNightOrder(characterIdsInPlay(), isFirstNight)
@@ -304,30 +323,38 @@ export function renderGrimoirePanel(container: HTMLElement, handle: HostRoomHand
     },
   })
 
+  const tokensHeader = el('div', { className: 'grimoire-tokens-header' }, [
+    el('h2', { textContent: 'Grimoire' }),
+    el('div', { className: 'button-row' }, [
+      el('button', { className: 'secondary', textContent: 'Lobby', onclick: () => openLobbyModal(handle) }),
+      el('button', { className: 'secondary', textContent: '+ Add seat', onclick: () => { handle.addSeat(); refreshTokenGrid() } }),
+      el('button', { className: 'secondary', textContent: 'Setup', onclick: () => openSetupModal(handle, () => { refreshTokenGrid(); refreshNightOrder() }) }),
+      swapSeatsButton,
+      revealDeathsButton,
+    ]),
+  ])
+
+  // A named reference (rather than building this inline below) because
+  // resizeCircleToFit() needs to measure this element's own box — see its
+  // comment for why that's the stable, JS-write-independent number the
+  // calculation is anchored on.
+  grimoireMain = el('div', { className: 'grimoire-main' }, [
+    tokensHeader,
+    pickingBanner,
+    swapBanner,
+    circleArea,
+    // Renders at its natural height now, potentially below the visible
+    // fold — grimoire-main itself scrolls to reach it when the circle above
+    // has taken the room instead. Sent cards live per-seat now (each seat's
+    // own popup), not in a separate global section here.
+    el('div', { className: 'grimoire-below-fold' }, [
+      el('div', { className: 'grimoire-notes' }, [el('h2', { textContent: 'Notes' }), notesInput]),
+    ]),
+  ])
+
   container.replaceChildren(
     el('div', { className: 'grimoire-layout' }, [
-      el('div', { className: 'grimoire-main' }, [
-        el('div', { className: 'grimoire-tokens-header' }, [
-          el('h2', { textContent: 'Grimoire' }),
-          el('div', { className: 'button-row' }, [
-            el('button', { className: 'secondary', textContent: 'Lobby', onclick: () => openLobbyModal(handle) }),
-            el('button', { className: 'secondary', textContent: '+ Add seat', onclick: () => { handle.addSeat(); refreshTokenGrid() } }),
-            el('button', { className: 'secondary', textContent: 'Setup', onclick: () => openSetupModal(handle, () => { refreshTokenGrid(); refreshNightOrder() }) }),
-            swapSeatsButton,
-            revealDeathsButton,
-          ]),
-        ]),
-        pickingBanner,
-        swapBanner,
-        circleArea,
-        // Deliberately scrollable rather than fighting for space with the
-        // circle above — the circle should always be fully visible; notes
-        // scrolling is an accepted tradeoff. Sent cards live per-seat now
-        // (each seat's own popup), not in a separate global section here.
-        el('div', { className: 'grimoire-below-fold' }, [
-          el('div', { className: 'grimoire-notes' }, [el('h2', { textContent: 'Notes' }), notesInput]),
-        ]),
-      ]),
+      grimoireMain,
       el('div', { className: 'grimoire-sidebar' }, [
         el('div', { className: 'night-order-header' }, [
           el('h2', { textContent: 'Night order' }),

@@ -543,48 +543,78 @@ below, clipping the bottom row of seats under the tab bar — directly contradic
 this app's own stated design intent that "the circle should always be fully visible;
 notes scrolling is an accepted tradeoff" (see "Fit-to-screen layout" in TODO.md). A
 flat vh percentage can't know how much room siblings actually took; only the browser's
-own layout engine knows that, so `grimoire-panel.ts` now measures it directly:
-`circleContainer` sits inside a wrapper, `circleArea` (`.grimoire-circle-area`, `flex:
-1; min-height: 0; display: flex; align-items: center; justify-content: center;`),
-whose *rendered* box already reflects "whatever space flexbox left after every
-sibling claimed its own height" — exactly the number we need, without hand-computing
-each sibling's height in JS. `resizeCircleToFit()` reads `circleArea.
-getBoundingClientRect()` and sets `circleContainer`'s width/height (inline, in px) to
-`min(rect.width, rect.height, 760)`, kept square regardless of the wrapper's own
-aspect ratio. A `ResizeObserver` on `circleArea` (not a plain window `resize`
-listener) re-runs this any time that available space changes for *any* reason — the
-window resizing, the header wrapping to two lines, a picking/swap banner toggling
-visible — not just viewport dimension changes. The CSS `max-width: min(100%, 78vh,
-760px)` is kept as a fallback only for the brief instant before the first
-`ResizeObserver` callback fires; don't rely on it for real sizing, and don't try to
-replace this with a better CSS-only percentage — the whole point is that no fixed
-percentage can be correct for every combination of window shape and however much
-vertical space the header/notes end up taking.
+own layout engine knows that, so `grimoire-panel.ts` measures it directly via
+`resizeCircleToFit()`.
 
-**`resizeCircleToFit()` shrinking the circle this freely shipped its own bug:** with no
-floor, a cramped window could shrink the circle below the point where adjacent seat
-tokens' fixed-width (92px) boxes started visually overlapping each other — sizing
-"whatever fits" is only correct down to the point where fitting starts costing
-correctness. Fixed with `minCircleSize(seatCount)`, which inverts
-`circular-layout.ts`'s own placement math to find the smallest square that keeps
-adjacent tokens apart: `layoutInCircle()` places seat `i` of `n` at radius
-`CIRCLE_RADIUS_PERCENT`% (now exported from `circular-layout.ts` specifically so this
-calculation can't silently drift out of sync with a second hardcoded copy if the
-radius is ever retuned again), so the chord distance between adjacent token centers is
-`2 * radius_px * sin(pi / n)` — solving that for the container size that keeps the
-chord at least `TOKEN_WIDTH_PX + MIN_TOKEN_GAP_PX` gives the minimum.
-`resizeCircleToFit()` takes `Math.max(minCircleSize(...), Math.min(rect.width,
-rect.height, 760))` — i.e. the measured "available space" size, but never below the
-overlap-free floor. `refreshTokenGrid()` also calls `resizeCircleToFit()` directly
-(not just relying on the `ResizeObserver`), since adding/removing a seat changes the
-minimum without necessarily changing `circleArea`'s own box size, which is the only
-thing the observer reacts to. When the floor is bigger than the actually-available
-space, the circle deliberately overflows `circleArea` rather than clipping — this is
-why `.grimoire-circle-area` dropped its `overflow: hidden`: an ancestor further up
-(`.tab-content`) already has `overflow-y: auto`, so an oversized circle just makes the
-page scrollable to it instead of hiding seats. A scrollbar is an acceptable tradeoff
-here in a way silent overlap never was — the whole point was to make overlap
-structurally impossible, not just less likely.
+This went through two designs, and the first one shipped its own bug worth
+understanding before touching this again. **First attempt:** give `circleArea`
+(`.grimoire-circle-area`, wrapping `circleContainer`) `flex: 1; min-height: 0;` inside
+`grimoire-main`'s flex column, alongside `.grimoire-below-fold` (notes) which *also*
+had `flex: 1; min-height: 0;` — the idea being that `circleArea`'s own rendered box
+would reflect "whatever flexbox left after every sibling claimed its own height."
+This shipped broken: with both the circle and notes willing to shrink all the way to
+0, flexbox split any squeeze **between them roughly evenly**, so on a cramped window
+the circle got squeezed down just as much as notes did — and once a seat-count-aware
+minimum size was added (see below) to stop tokens overlapping at small sizes, the
+now-larger-than-its-squeezed-box circle **visually overflowed into the header/notes
+around it**, since a flex item's overflow paints outside its own allocated box without
+displacing sibling flex items — it doesn't push them out of the way, it just draws on
+top of them. That's a straightforwardly worse bug than the one being fixed.
+
+**Current design:** the circle is no longer a flex participant that competes with
+notes for space at all. `.grimoire-circle-area` is `flex: none` — its box is just
+whatever `circleContainer`'s own explicit (JS-set) size is, full stop.
+`.grimoire-below-fold` is also `flex: none` now, rendering at its natural (small,
+fixed-rows-textarea) height rather than being squeezed. Instead, `.grimoire-main`
+itself (the flex column containing the header, banners, circle, and notes) is
+`overflow-y: auto` — a scroll container in its own right. So: the circle gets sized
+first, to as much space as `grimoire-main` actually has (see the calculation below);
+notes render at their natural height right after it; and if the combined total is
+taller than `grimoire-main`'s own box, `grimoire-main` scrolls to reach the notes —
+the circle is never squeezed to make room, and never overflows onto its neighbors,
+because there's no longer a space negotiation between them for it to lose.
+
+`resizeCircleToFit()`'s calculation deliberately does NOT read `circleArea`'s own
+`height` (that would be circular — `circleArea`'s height, with `flex: none`, is a
+*function of* `circleContainer`'s size, which is what this function is about to set).
+Instead: `grimoireMain.getBoundingClientRect().bottom` (grimoire-main's own bottom
+edge — fixed by the outer two-column row layout regardless of its children's content,
+completely unaffected by anything this function writes) minus `circleArea.
+getBoundingClientRect().top` (circleArea's top edge, which only depends on the
+header/banners above it — also unaffected by this function's writes) gives the
+vertical space actually available for the circle. `circleArea.getBoundingClientRect().
+width` gives the horizontal cap. The result: `Math.max(minCircleSize(seatCount),
+Math.min(availableWidth, availableHeight, 760))` — never below the overlap-free floor,
+kept square, capped at 760px. Because neither number the calculation depends on is
+itself downstream of this function's own writes, repeated calls converge instead of
+fighting themselves in a loop. A `ResizeObserver` is on `grimoireMain` now, not
+`circleArea` — observing an element you also write the size of (as the old
+`circleArea`-observing version did) works out fine here since the new calculation
+doesn't create a feedback loop, but observing the stable ancestor you *don't* write to
+is the safer default pattern, and it's what actually changes size for the reasons that
+matter (window resize, header wrapping, sidebar reflow). Toggling a picking/swap
+banner does NOT change `grimoireMain`'s own box size (it's a fixed-size scroll
+container), so the observer alone wouldn't catch that — `refreshTokenGrid()` calls
+`resizeCircleToFit()` directly instead, and every banner-visibility toggle in
+`grimoire-panel.ts` already calls `refreshTokenGrid()` right afterward, so this is
+covered without extra wiring. The CSS `max-width: min(100%, 78vh, 760px)` on
+`.seat-circle` is kept as a fallback only for the brief instant before the first
+`ResizeObserver` callback fires; don't rely on it for real sizing.
+
+**The seat-count-aware minimum**, `minCircleSize(seatCount)`, still works the same way
+regardless of the above: it inverts `circular-layout.ts`'s own placement math to find
+the smallest square that keeps adjacent tokens apart. `layoutInCircle()` places seat
+`i` of `n` at radius `CIRCLE_RADIUS_PERCENT`% (exported from `circular-layout.ts`
+specifically so this calculation can't silently drift out of sync with a second
+hardcoded copy if the radius is ever retuned again), so the chord distance between
+adjacent token centers is `2 * radius_px * sin(pi / n)` — solving that for the
+container size that keeps the chord at least `TOKEN_WIDTH_PX + MIN_TOKEN_GAP_PX` gives
+the minimum. When this floor is bigger than the space `resizeCircleToFit()` actually
+measured, the circle (and `circleArea` around it) simply extends past `grimoireMain`'s
+own box, and `grimoireMain`'s `overflow-y: auto` makes that scrollable rather than
+clipped — a scrollbar is an acceptable tradeoff here in a way silent overlap never
+was, but this should be rare in practice (only many seats on a genuinely small
+window), not the common case the sizing calculation targets.
 
 A related, smaller bug in the same area: the Grimoire's own header row (the `<h2>`
 next to the Lobby/Setup/etc. buttons) had a large, wrong-looking gap above it. Cause:
@@ -1072,6 +1102,13 @@ either. `secretMessage`/`sendToStoryteller`/`onPlayerMessage` are gone entirely 
     the window is too small to show the whole circle at its overlap-free minimum
     size, the page should become scrollable rather than clipping any seats out of
     view or letting them overlap.
+  - Add enough seats (or shrink the window enough) that the circle's overlap-free
+    minimum size is bigger than what would otherwise fit → the circle itself should
+    grow to that minimum and the Notes section should be the thing pushed below the
+    visible fold (reachable by scrolling the Grimoire panel), never the other way
+    around — the circle should never visibly overlap the header/button row above it
+    or get squeezed smaller than its overlap-free minimum just because notes wanted
+    space too.
   - Player: check Town Square with both an even and an odd seat count → the
     distribution summary text below the circle should never overlap the bottom-most
     seat token in either case (the even case is the one that previously failed,
