@@ -2,6 +2,7 @@ import type { JsonValue } from 'trystero'
 
 export type CharacterType = 'townsfolk' | 'outsider' | 'minion' | 'demon'
 export type Alignment = 'good' | 'evil'
+export type Edition = 'tb' | 'bmr' | 'snv' | 'carousel'
 
 // Static game content — never sent over the network itself, only referenced by
 // `characterId` string in payloads. Loaded from src/data/characters.ts.
@@ -10,6 +11,7 @@ export interface Character {
   name: string
   type: CharacterType
   alignment: Alignment
+  edition: Edition
   ability: string
   clarification?: string
   flavor?: string

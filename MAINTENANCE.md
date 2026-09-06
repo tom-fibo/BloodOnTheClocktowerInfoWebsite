@@ -661,10 +661,10 @@ src/
                                # `[key: string]: JsonValue` index signature (SeatMessage doesn't
                                # — it's stored/rendered locally, never sent as-is)
   data/
-    characters.ts              # CHARACTERS: all 22 Trouble Brewing characters (ability,
+    characters.ts              # CHARACTERS: all Trouble Brewing and Bad Moon Rising characters (ability,
                                  # clarification, flavor, first/other night text + order,
                                  # wiki/token URLs computed from name/id)
-    scripts.ts                  # SCRIPTS (currently just Trouble Brewing), DEFAULT_SCRIPT_ID
+    scripts.ts                  # SCRIPTS (currently just Trouble Brewing & Bad Moon Rising), DEFAULT_SCRIPT_ID
   game/
     night-order.ts               # deriveNightOrder(characterIdsInPlay, isFirstNight) — sorts
                                   # by firstNightOrder/otherNightsOrder, prepends synthetic

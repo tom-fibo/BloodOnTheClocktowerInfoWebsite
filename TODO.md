@@ -1,5 +1,16 @@
 Agent: Include upcoming tasks as needed. Mark as not started, in progress, implemented, or tested & functional.
 
+## Future Ideas
+
+- Additional core scripts beyond Trouble Brewing (Bad Moon Rising, Sects & Violets, etc.). - Bad Moon Rising currently implemented
+- Custom script JSON import, beyond the hardcoded default script(s).
+- Accessibility modes beyond the baseline contrast requirement above — e.g. colorblind-safe alternative indicators for alive/dead and good/evil, a high-contrast toggle.
+- Fabled / Traveler character types.
+- Reconsidering the exact autofill semantics of "This player is" and "This character selected you" once tested against real play — these still have no unambiguous default and only pre-fill a text label.
+- Tuning (or replacing) the connection watchdog's 15-second "was this backgrounding, or genuinely dead" heuristic once observed against real disconnect reports.
+
+# Website Creation
+
 ## Night communication MVP (room + roster + private ST/Player messaging)
 
 - Status: **functional**
@@ -45,12 +56,3 @@ Agent: Include upcoming tasks as needed. Mark as not started, in progress, imple
   - Status: **functional**. `data/characters.ts` + `data/scripts.ts` hardcode all 22 Trouble Brewing characters (content hand-refined for accuracy — flavor text, player-facing night-info wording, keyword clarifications). Ability text shown inline; the character list flows through CSS columns spanning group boundaries, closer to the official script PDF's compact layout, plus the same 5–15+ player distribution table from the PDF at the bottom. The per-character box/border was removed in favor of a hairline separator to further reduce vertical space, since the script still didn't fit one screen with boxes. The CSS columns' ideal width was widened (280px → 420px) after wide-monitor testing found the browser was settling on more, narrower columns than there was content to fill, wasting width and forcing extra text-wrapping instead of the columns in use simply stretching wider.
 - Both Players and Storytellers can easily open a "detailed information" popup for each character (from all views - seeing it on the script, setting it to a player in town square or grimoire, or when mentioned in night information). This would show the character namem, token (using the circle texture with their icon, such as https://release.botc.app/resources/characters/tb/washerwoman_g.webp), their ability description, a "clarification" section (not on the app by default - this would say things like "Pair: Players sitting next to each other." to clarify keywords), flavor text, wiki link, and *what* information they would receive in the night (e.g. for the Chef, shows that they learn a number in the first night, usually 0 or 1, and nothing in subsequent nights). This should be designed to be openable on both Mobile and Desktop views (e.g. long press on mobile, on desktop hovering shows the name, ability, and clarification, and they can also open the full more info popup).
   - Status: **functional** (`ui/character-popup.ts`, `ui/character-picker.ts`, `ui/modal.ts`). Tap/click opens the full popup everywhere a character appears; desktop hover additionally shows a name/ability/clarification tooltip. Picking *a* character anywhere in the app goes through a single-click character grid popup, not a dropdown, now widened significantly on desktop screens, with smaller tiles and no Townsfolk/Outsider/Minion/Demon headers — the whole script's characters still didn't fit one screen with the headers even after widening. A second, multi-select variant of the same picker (`openMultiCharacterPicker`) supports "choose exactly N, with some grayed out and unclickable" — used by the Grimoire's bluffs preset. A character shown inside a received night card shows its token icon, not just its name. Token images hotlink `release.botc.app` — a third party's asset host we don't control.
-
-## Deferred / future ideas (not needed yet)
-
-- Custom script JSON import, beyond the hardcoded default script(s).
-- Additional core scripts beyond Trouble Brewing (Bad Moon Rising, Sects & Violets, etc.).
-- Accessibility modes beyond the baseline contrast requirement above — e.g. colorblind-safe alternative indicators for alive/dead and good/evil, a high-contrast toggle.
-- Fabled / Traveler character types.
-- Reconsidering the exact autofill semantics of "This player is" and "This character selected you" once tested against real play — these still have no unambiguous default and only pre-fill a text label.
-- Tuning (or replacing) the connection watchdog's 15-second "was this backgrounding, or genuinely dead" heuristic once observed against real disconnect reports.
