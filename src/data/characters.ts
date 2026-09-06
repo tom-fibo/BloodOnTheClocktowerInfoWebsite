@@ -455,8 +455,6 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: "Yes boss. I explained fings real good to dat geezer. He don't want me explain it again. Nah boss, I don't need no doctor - it's only a knife wound. Be right come mornin'",
     firstNight: 'You might learn that your alignment has changed.',
     otherNights: 'You might learn that your alignment has changed.',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
   },
   {
     id: 'lunatic',
@@ -469,7 +467,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: 'I am the night... I think.',
     firstNight: 'You would be shown "minions" and "bluffs" (this information is arbitrary), then prompted for whatever choices you think you have.',
     otherNights: 'You would be prompted for whatever choices you think you have.',
-    firstNightOrder: 3,
+    firstNightOrder: 2,
     otherNightsOrder: 6,
   },
   // BMR Minions
@@ -581,7 +579,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: 'Steps: seats away (sitting adjacent would be 1).',
     flavor: 'Do not disturb me. The tick must continue, for the circle is a symbol of life and contains all things - all answers - in its divine machinery. I must work.',
     firstNight: 'You would learn a number (usually 1 to 3).',
-    firstNightOrder: 0,
+    firstNightOrder: 8,
   },
   {
     id: 'dreamer',
@@ -593,8 +591,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: 'I remember the Clockmaker. The sky was red and it was raining fractal triangles. There was a smell of violets and a bubbling sound. A woman with glowing eyes and a scraggly beard was hissing at the sky. Then, I awoke.',
     firstNight: 'You would choose a player and learn two characters.',
     otherNights: 'You would choose a player and learn two characters.',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
+    firstNightOrder: 9,
+    otherNightsOrder: 13,
   },
   {
     id: 'snake-charmer',
@@ -607,8 +605,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: 'Effendi... I am but a humble man, but my pipe is golden and a single tune will tame the wildest djinn, Inshallah. They say that greed hangs more men than rope. But not I, Effendi... not I.',
     firstNight: 'You would choose a player. (You are always informed if your character & alignment changes)',
     otherNights: 'You would choose a player. (You are always informed if your character & alignment changes)',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
+    firstNightOrder: 3,
+    otherNightsOrder: 2,
   },
   {
     id: 'mathmatician',
@@ -621,8 +619,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: 'Any consistent formal system x, within which a certain amount of elementary arithmetic can be carried out is incomplete; that is, there are statements of the language of x which can neither be proved nor disproved in x. Ergo, you are drunk.',
     firstNight: 'You would learn a number (usually 0 or 1).',
     otherNights: 'You would learn a number (usually 0 or 1).',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
+    firstNightOrder: 11,
+    otherNightsOrder: 19,
   },
   {
     id: 'flowergirl',
@@ -634,7 +632,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night\nYou check if a player votes while being the Demon, not if the current Demon voted yesterday (e.g. if Barber or Pit-Hag switch the Demon\'s character).',
     flavor: 'Yesterday\'s violets have withered and died, but today my poppies bloom.',
     otherNights: 'You would learn a "yes" or "no".',
-    otherNightsOrder: 0,
+    otherNightsOrder: 14,
   },
   {
     id: 'town-crier',
@@ -646,7 +644,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night\nYou check if a player nominates while being a Minion, not if a current Minion nominated yesterday (e.g. if Barber or Pit-Hag switch a Minion\'s character).',
     flavor: 'Hear ye! Hear ye! Witchcraft in the labyrinth! Genius savant reveals all! Town in danger! Hear Ye!',
     otherNights: 'You would learn a "yes" or "no".',
-    otherNightsOrder: 0,
+    otherNightsOrder: 15,
   },
   {
     id: 'oracle',
@@ -658,7 +656,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night',
     flavor: 'Only the chosen may gaze beyond the veil. The dead are restless, and they point in silence toward the icy north.',
     otherNights: 'You would learn a number (usually 0 or 1).',
-    otherNightsOrder: 0,
+    otherNightsOrder: 16,
   },
   {
     id: 'savant',
@@ -680,8 +678,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: 'Did you hear that stranger in the cashmere coat put the word on our young Belle? And she said yes? Well, that\'s nothing compared to what Harry and that juggler got up to at the fair! The things I could say if I was a tattletale... my, yes.',
     firstNight: 'You would choose 2 players and learn a "yes" or "no", or save your ability.',
     otherNights: 'If you still have your ability, you would choose 2 players and learn a "yes" or "no", or continue to save it.',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
+    firstNightOrder: 10,
+    otherNightsOrder: 17,
   },
   {
     id: 'philosophper',
@@ -693,8 +691,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: 'If anything is real, beer is real. Drink, for tomorrow we may die.',
     firstNight: 'You would choose a character and wake as they would, or save your ability.',
     otherNights: 'If you hadn\'t chosen a character yet, you could do so. You would then wake up as your chosen character would (if you chose on a previous night, you would still have that ability & wake as they would).',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
+    firstNightOrder: 2,
+    otherNightsOrder: 1,
   },
   {
     id: 'artist',
@@ -715,7 +713,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: 'You may guess the same player or character more than once.\nAny player may claim to be the Juggler, and publicly guess 5 player-character pairs. Only a real Juggler learns how many they got correct.',
     flavor: 'For my next trick, as per request, I will need a flower, a bag of beans, a toy snake, a paintbrush, and a motorized gasoline-powered hedge trimming device. I warn you, this trick may be my last. Oh dear.',
     otherNights: 'The night after you guess, you would learn a number (0 to 5).',
-    otherNightsOrder: 0,
+    otherNightsOrder: 18,
   },
   {
     id: 'sage',
@@ -726,7 +724,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     ability: 'If the Demon kills you, you learn that it is 1 of 2 players.',
     flavor: 'These mountainous tomes guard the secret, I am sure of it! Twixt word and word, it lies in wait. More candles, boy! More ink! These notes may look arcane, but the infernal puzzle is revealing itself.',
     otherNights: 'If you died, you would learn 2 players.',
-    otherNightsOrder: 0,
+    otherNightsOrder: 12,
   },
   // SNV Outsiders
   {
@@ -748,7 +746,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     ability: 'When you die, 1 player is drunk from now on.',
     flavor: 'I will never forget her. Never.',
     otherNights: 'You wouldn\'t wake up. Your death immediately makes a player drunk. This step acts as a reminder to the Storyteller to do so.',
-    otherNightsOrder: 0,
+    otherNightsOrder: 10,
   },
   {
     id: 'barber',
@@ -760,7 +758,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: 'The Barber changes character, but not alignment. This can result in, e.g., an evil Townsfolk or a good Minion.\nPlayers are always informed if their character changes.',
     flavor: 'Did you know that barbery and surgery were once the same profession? No? Well, now you do.',
     otherNights: 'You wouldn\'t wake up. If you died today or tonight, this is when the Demon would swap characters.',
-    otherNightsOrder: 0,
+    otherNightsOrder: 11,
   },
   {
     id: 'klutz',
@@ -782,7 +780,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     ability: 'You & an opposing player know each other. If the good player is executed, evil wins. Good can\'t win if you both live.',
     flavor: 'I\'m not Sara! I\'m Clara! SHE is Sara! Sara is the evil one! Not me!',
     firstNight: 'You would learn your twin and their character. They would learn you are the Evil Twin.',
-    firstNightOrder: 0,
+    firstNightOrder: 1,
   },
   {
     id: 'witch',
@@ -794,8 +792,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: "Three drops of goat's blood. A lock of hair, torn in anger. The name is spoken, the shadow cast. Walk left foot first down that brambled path, and don't look back.",
     firstNight: 'You would choose a player.',
     otherNights: 'You would choose a player.',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
+    firstNightOrder: 6,
+    otherNightsOrder: 3,
   },
   {
     id: 'cerenovus',
@@ -808,8 +806,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     flavor: 'Reality is merely an opinion. Specifically, my opinion.',
     firstNight: 'You would choose a player and character. They would learn they were chosen and which character to be mad as.',
     otherNights: 'You would choose a player and character. They would learn they were chosen and which character to be mad as.',
-    firstNightOrder: 0,
-    otherNightsOrder: 0,
+    firstNightOrder: 7,
+    otherNightsOrder: 4,
   },
   {
     id: 'pit-hag',
@@ -821,7 +819,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night\nThe Pit-Hag changes character, but not alignment. This can result in, e.g., an evil Townsfolk or a good Minion.\nPlayers are always informed if their character changes.\nDeaths tonight are Arbitrary: The Storyteller may choose to kill or save any players. Usually, if the current Demon is changed to a new demon type, nobody will die. If a new evil player is changed into a Demon, the old Demon and one other player (to signal the change) will be killed.',
     flavor: 'Round about the cauldron go; In the poison\'d entrails throw; Toad, that under cold stone; Days and nights has thirty-one; Sweated venom sleeping got; Boil thou first in the charmed pot.',
     otherNights: 'You would choose a player and character.',
-    otherNightsOrder: 0,
+    otherNightsOrder: 5,
   },
   // SNV Demons
   {
@@ -834,7 +832,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night',
     flavor: 'Your walls and your weapons are but smoke in dreams.',
     otherNights: 'You would choose a player. (A new Fang Gu learns that their character and alignment changed, but not the evil team)',
-    otherNightsOrder: 0,
+    otherNightsOrder: 6,
   },
   {
     id: 'vigormortis',
@@ -846,7 +844,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night',
     flavor: 'All doors are one door. All keys are one key. All cups are one cup, but whosoever drinketh of the water that I give shall never thirst, but the water shall be in him a well springing up into everlasting life.',
     otherNights: 'You would choose a player.',
-    otherNightsOrder: 0,
+    otherNightsOrder: 7,
   },
   {
     id: 'no-dashii',
@@ -858,7 +856,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night',
     flavor: 'By the sins of Arnoch, I feel thy laden stench. By the curs-ed sun and her foul legion of tiny grinning gods, I corrupt thee. By the blessed night and the hidden depths of the horrid and unholy sea, I end thy squalid life upon this plane.',
     otherNights: 'You would choose a player.',
-    otherNightsOrder: 0,
+    otherNightsOrder: 8,
   },
   {
     id: 'vortox',
@@ -870,7 +868,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     clarification: '*Not the First Night\nNote that all Townsfolk must receive specifically false information. They cannot receive true information.',
     flavor: 'Black is White. Right is Wrong. Left is Right. Up is Long. Down is Sight. Short is Blind. Follow me. Answers find.',
     otherNights: 'You would choose a player.',
-    otherNightsOrder: 0,
+    otherNightsOrder: 9,
   },
 ]
 
