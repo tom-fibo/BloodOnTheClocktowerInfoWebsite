@@ -294,6 +294,9 @@ button.danger {
 
 /* QR join code */
 
+/* flex: 1 so this claims its full share of .screen's remaining height whenever
+   it's shown, rather than being sized to whatever small height its content
+   happens to need — that's what lets .qr-code below size the code to fill it. */
 .qr-container {
   margin-top: 0.75rem;
   padding: 0.75rem;
@@ -302,6 +305,9 @@ button.danger {
   background: var(--bg-alt);
   display: flex;
   justify-content: center;
+  align-items: center;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Higher specificity than the plain .hidden utility so it isn't lost to source
@@ -311,10 +317,22 @@ button.danger {
   display: none;
 }
 
+/* width/height: auto + aspect-ratio + max-width/max-height: 100% (both, not
+   just one) lets the browser pick whichever of qr-container's width or height
+   is the binding constraint — the code fills the full available height, or
+   the full width if that's the smaller dimension, without any JS measuring. */
+.qr-code {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1 / 1;
+}
+
 .qr-code svg {
   width: 100%;
-  max-height: calc(100vh - 100px);
-  height: auto;
+  height: 100%;
+  display: block;
   background: #fff;
   border-radius: 4px;
 }

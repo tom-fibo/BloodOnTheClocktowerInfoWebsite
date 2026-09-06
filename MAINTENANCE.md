@@ -616,6 +616,29 @@ clipped — a scrollbar is an acceptable tradeoff here in a way silent overlap n
 was, but this should be rare in practice (only many seats on a genuinely small
 window), not the common case the sizing calculation targets.
 
+### Sizing the QR join code to fill its box, without JS
+
+`.qr-code svg` used to be a hardcoded `width: 100%; max-height: 220px` — the same
+flavor of guess `.seat-circle` used to make (see above), and it had the same
+underlying problem: a fixed cap has no idea how much room is actually available, so
+it's either too small on a roomy screen or (if raised) too large on a cramped one.
+
+Unlike the circle, this one didn't need JS or a `ResizeObserver` to fix, because the
+QR code has no seat-count-driven minimum size to enforce and no sibling it can
+visually overflow onto — it just needs to fill whatever box it's given, in whichever
+dimension is the binding constraint. `.qr-container` (the box) got `flex: 1;
+min-height: 0` so it actually claims its real share of `.screen`'s remaining height
+when toggled open, instead of being sized to its own content like before. Inside it,
+`.qr-code` gets `width: auto; height: auto; max-width: 100%; max-height: 100%;
+aspect-ratio: 1 / 1` — with *both* dimensions `auto` and *both* max- bounds set, the
+browser's own aspect-ratio sizing algorithm picks whichever of the container's width
+or height is smaller and fills that, which is exactly "full height, or width if
+that's smaller." (`align-items: center` on `.qr-container`, not the default
+`stretch`, is required for this — `stretch` would force `.qr-code`'s auto height to
+fill the container outright, short-circuiting the aspect-ratio calculation before it
+gets a say.) The inner `<svg>` itself is just `width: 100%; height: 100%`, matching
+whatever box `.qr-code` worked out.
+
 A related, smaller bug in the same area: the Grimoire's own header row (the `<h2>`
 next to the Lobby/Setup/etc. buttons) had a large, wrong-looking gap above it. Cause:
 the buttons sit in a `.button-row` div — a class shared with the setup/landing
