@@ -2,7 +2,7 @@ Agent: Include upcoming tasks as needed. Mark as not started, in progress, imple
 
 ## Future Ideas
 
-- Additional core scripts beyond Trouble Brewing (Bad Moon Rising, Sects & Violets, etc.). - Bad Moon Rising currently implemented
+- Additional scripts beyond base Trouble Brewing, Bad Moon Rising, Sects & Violets
 - Custom script JSON import, beyond the hardcoded default script(s).
 - Accessibility modes beyond the baseline contrast requirement above — e.g. colorblind-safe alternative indicators for alive/dead and good/evil, a high-contrast toggle.
 - Fabled / Traveler character types.
