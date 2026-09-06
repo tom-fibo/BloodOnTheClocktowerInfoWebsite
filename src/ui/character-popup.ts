@@ -11,8 +11,8 @@ export function openCharacterPopup(characterId: string): void {
   const nightLines: HTMLElement[] = []
   if (character.firstNight || character.otherNights) {
     nightLines.push(el('h3', { textContent: 'What they receive at night' }))
-    if (character.firstNight) nightLines.push(el('p', { textContent: `First night: ${character.firstNight}` }))
-    if (character.otherNights) nightLines.push(el('p', { textContent: `Other nights: ${character.otherNights}` }))
+    if (character.firstNight && !character.firstNight.startsWith('You wouldn\'t wake up.')) nightLines.push(el('p', { textContent: `First night: ${character.firstNight}` }))
+    if (character.otherNights && !character.otherNights.startsWith('You wouldn\'t wake up.')) nightLines.push(el('p', { textContent: `Other nights: ${character.otherNights}` }))
   }
 
   const card = el('div', { className: `character-popup-card ${character.alignment}` }, [
