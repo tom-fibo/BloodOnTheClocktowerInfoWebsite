@@ -11,8 +11,8 @@ export function openCharacterPopup(characterId: string): void {
   const nightLines: HTMLElement[] = []
   if (character.firstNight || character.otherNights) {
     nightLines.push(el('h3', { textContent: 'Night actions:' }))
-    if (character.firstNight && !character.firstNight.startsWith('You wouldn\'t wake up.')) nightLines.push(el('p', { textContent: `First night: ${character.firstNight}` }))
-    if (character.otherNights && !character.otherNights.startsWith('You wouldn\'t wake up.')) nightLines.push(el('p', { textContent: `Other nights: ${character.otherNights}` }))
+    if (character.firstNight && !character.firstNight.startsWith('You wouldn\'t wake up.')) {nightLines.push(el('p', { textContent: `First night: ${character.firstNight}` }))}
+    if (character.otherNights && !character.otherNights.startsWith('You wouldn\'t wake up.')) {nightLines.push(el('p', { textContent: `Other nights: ${character.otherNights}` }))}
   }
 
   const card = el('div', { className: `character-popup-card ${character.alignment}` }, [
@@ -24,7 +24,7 @@ export function openCharacterPopup(characterId: string): void {
     el('p', { className: 'character-popup-type', textContent: typeLabel }),
     el('p', { className: 'character-popup-ability', textContent: character.ability }),
     ...(character.clarification
-      ? [el('p', { className: 'character-popup-clarification', textContent: character.clarification })]
+      ? character.clarification.split('\n').map((line) => el('p', { className: 'character-popup-clarification', textContent: line}))
       : []),
     ...(character.flavor ? [el('p', { className: 'character-popup-flavor', textContent: `"${character.flavor}"` })] : []),
     ...nightLines,
