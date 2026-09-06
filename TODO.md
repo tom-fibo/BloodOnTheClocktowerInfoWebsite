@@ -4,6 +4,7 @@ Agent: Include upcoming tasks as needed. Mark as not started, in progress, imple
 
 - Additional scripts beyond base Trouble Brewing, Bad Moon Rising, Sects & Violets
 - Custom script JSON import, beyond the hardcoded default script(s).
+- Base night order in the script rather than the characters, allow for Minion/Demon info to be moved.
 - Accessibility modes beyond the baseline contrast requirement above — e.g. colorblind-safe alternative indicators for alive/dead and good/evil, a high-contrast toggle.
 - Fabled / Traveler character types.
 - Reconsidering the exact autofill semantics of "This player is" and "This character selected you" once tested against real play — these still have no unambiguous default and only pre-fill a text label.

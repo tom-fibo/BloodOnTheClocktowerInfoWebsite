@@ -313,7 +313,7 @@ button.danger {
 
 .qr-code svg {
   width: 100%;
-  max-width: 220px;
+  max-height: calc(100vh - 100px);
   height: auto;
   background: #fff;
   border-radius: 4px;
