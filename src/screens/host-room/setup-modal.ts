@@ -25,9 +25,7 @@ export function openSetupModal(handle: HostRoomHandle, onAssigned: () => void): 
   const seats = handle.getSeats()
   const dist = suggestDistribution(seats.length)
 
-  const selected = new Set(
-    seats.map((seat) => handle.getCharacterAssignment(seat.seat)).filter((id): id is string => Boolean(id)),
-  )
+  const selected = new Set<string>()
 
   function countOf(type: CharacterType): number {
     return [...selected].filter((id) => getCharacter(id)?.type === type).length

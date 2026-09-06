@@ -609,8 +609,8 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     otherNightsOrder: 2,
   },
   {
-    id: 'mathmatician',
-    name: 'Mathmatician',
+    id: 'mathematician',
+    name: 'Mathematician',
     type: 'townsfolk',
     alignment: 'good',
     edition: 'snv',
@@ -682,7 +682,7 @@ const RAW_CHARACTERS: Omit<Character, 'wikiUrl' | 'tokenUrl'>[] = [
     otherNightsOrder: 17,
   },
   {
-    id: 'philosophper',
+    id: 'philosopher',
     name: 'Philosopher',
     type: 'townsfolk',
     alignment: 'good',
