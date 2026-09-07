@@ -17,6 +17,14 @@ import { renderScriptPanel } from './script-panel'
 // auto-reconnect — 8s gives the Storyteller's own reload a moment to land
 // before this side forces a fresh WebRTC handshake too.
 const AUTO_RELOAD_DELAY_MS = 8000
+// The player's very first WebRTC handshake with the Storyteller sometimes just
+// doesn't complete (a flaky mesh connection, not a "the Storyteller was here and
+// left" event — room.onPeerLeave can't even fire for a peer that never finished
+// connecting), leaving the player sat on what looks like a normal lobby with no
+// indication the Storyteller can't actually see them yet. Longer than
+// AUTO_RELOAD_DELAY_MS since establishing a brand new connection (ICE/TURN
+// negotiation) is inherently slower than recovering one that already existed.
+const INITIAL_CONNECT_TIMEOUT_MS = 15000
 
 export function renderJoinRoom(container: HTMLElement): void {
   const { roomCode, selfName } = getState()
@@ -96,10 +104,11 @@ function buildJoinRoomUi(
     textContent: 'Refresh connection',
     onclick: () => location.reload(),
   })
-  const banner = el('div', { className: 'disconnect-banner hidden' }, [
-    el('span', { textContent: 'Storyteller disconnected — waiting to reconnect…' }),
-    reconnectButton,
-  ])
+  // Visible (not `hidden`) from the moment this screen mounts — this same
+  // banner also covers "haven't connected to the Storyteller yet at all",
+  // which is the state every join starts in until the first roster arrives.
+  const bannerText = el('span', { textContent: 'Not yet connected to the Storyteller — waiting…' })
+  const banner = el('div', { className: 'disconnect-banner' }, [bannerText, reconnectButton])
   let autoReloadTimer: ReturnType<typeof setTimeout> | null = null
 
   function clearAutoReload(): void {
@@ -107,6 +116,14 @@ function buildJoinRoomUi(
       clearTimeout(autoReloadTimer)
       autoReloadTimer = null
     }
+  }
+
+  function scheduleAutoReload(delayMs: number): void {
+    clearAutoReload()
+    autoReloadTimer = setTimeout(() => {
+      if (isModalOpen() || nightActionsState.pendingElements.length > 0) return
+      location.reload()
+    }, delayMs)
   }
 
   container.replaceChildren(
@@ -151,15 +168,15 @@ function buildJoinRoomUi(
   })
 
   handle.onStorytellerLeave(() => {
+    // Only reachable after at least one roster has arrived (see onPeerLeave's
+    // storytellerId check in room.ts), so the banner's "waiting to connect"
+    // text is always stale by this point — switch it to the reconnect message.
+    bannerText.textContent = 'Storyteller disconnected — waiting to reconnect…'
     banner.classList.remove('hidden')
     // Give the Storyteller's own reload a window to land, but don't leave the
     // player stuck on this banner forever if it doesn't — see the "players
     // don't auto-refresh connection" report this was added for.
-    clearAutoReload()
-    autoReloadTimer = setTimeout(() => {
-      if (isModalOpen() || nightActionsState.pendingElements.length > 0) return
-      location.reload()
-    }, AUTO_RELOAD_DELAY_MS)
+    scheduleAutoReload(AUTO_RELOAD_DELAY_MS)
   })
 
   handle.onCharacterAssign((characterId) => {
@@ -171,6 +188,10 @@ function buildJoinRoomUi(
     savePlayerFeed(roomCode, nightActionsState.feed)
     tabsHandle?.setBadge('night-actions', true)
   })
+
+  // Covers the "never actually connected" case the banner starts in — cleared
+  // by onRosterChange above the moment a connection does come through.
+  scheduleAutoReload(INITIAL_CONNECT_TIMEOUT_MS)
 
   const tabsShell = container.querySelector<HTMLDivElement>('.tabs-shell')!
   tabsHandle = renderTabs(tabsShell, [

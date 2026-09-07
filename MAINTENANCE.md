@@ -467,6 +467,27 @@ automatically, gated by the same `isModalOpen()`/`pendingElements` guard as abov
 banner itself also gained a manual "Refresh connection" button (same `location.reload()`
 as the Storyteller's Lobby modal button) for the impatient/guarded-out case.
 
+**That banner used to start `hidden` and only appear on `onStorytellerLeave`** — which
+meant a Player's very first connection attempt had no failure signal at all. Reported
+bug: the Storyteller sometimes couldn't see a Player until that Player manually
+retried, with no indication on the Player's side that anything was wrong — they landed
+straight on what looks like a normal, working lobby (empty character/feed sections are
+indistinguishable from "connected but nothing sent yet" vs. "never actually
+connected"). `onStorytellerLeave` can't fire for this case either — it's driven by
+`room.onPeerLeave` matching a `storytellerId` that's only ever set once a roster has
+already arrived once, so a connection that never completes in the first place never
+triggers it. Fix: the banner is now visible from the moment the room screen mounts
+(text: "Not yet connected to the Storyteller — waiting…"), hidden by the same
+`onRosterChange` handler the instant any roster arrives (proof the connection is
+live — the Storyteller replies to a new peer's `hello` with a targeted `roster` send,
+see `room.ts`), and backed by its own 15-second auto-reload (`INITIAL_CONNECT_TIMEOUT_MS`,
+longer than the 8-second reconnect one — establishing a brand-new WebRTC/ICE connection
+is inherently slower than recovering one that already existed) so a Player who doesn't
+notice the banner or click "Refresh connection" still recovers on their own. Both
+auto-reload timers now go through one shared `scheduleAutoReload(delayMs)` helper
+(same `isModalOpen()`/`pendingElements` guard as before) rather than duplicating the
+`setTimeout` body.
+
 `HostRoomHandle.resyncConnectedSeats()` is a different, ST-triggered nudge: it
 re-broadcasts the roster and re-sends `characterAssign` to every currently-connected
 seat, without touching any state. `lobby-modal.ts` calls it every time the modal opens.
