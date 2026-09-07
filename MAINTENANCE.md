@@ -55,6 +55,77 @@ player's persistent **reconnect token** (see below). It still regenerates on a f
 page reload, but that no longer means "the same human reappears as a new roster
 row" — see "Seats, reconnect, and persistence" below for how that's now handled.
 
+### TURN fallback for restrictive networks (`src/trystero/turn-config.ts`)
+
+Real-world report: a game failed to connect entirely when run on a public network,
+despite working fine on private/home networks. Root cause, confirmed by reading
+Trystero's own source (`node_modules/@trystero-p2p/core/dist/peer.mjs`): `joinRoom()`
+only configures 4 STUN servers by default (3x Google, 1x Cloudflare) and **zero TURN
+servers** unless the caller explicitly passes `turnConfig`. STUN alone can't traverse
+symmetric NAT or many restrictive firewalls — exactly the profile of typical
+public/guest Wi-Fi, while most home routers use a friendlier NAT type STUN can punch
+through. This isn't a Trystero bug or a reason to swap libraries — Trystero's own
+README has a "Troubleshooting connection issues" section describing this exact
+failure mode and documenting `turnConfig` as the fix.
+
+Getting a TURN server without giving up the "no backend we run" architecture above
+meant picking a **managed, free-tier, client-callable** TURN provider rather than
+self-hosting (e.g. coturn) — self-hosting would mean an actual server to provision
+and keep online during games, the biggest possible departure from this app's
+no-backend design. **Metered.ca** was chosen because its TURN REST API is explicitly
+documented as safe to call directly from browser JS (`GET
+https://<appname>.metered.live/api/v1/turn/credentials?apiKey=<key>`), returning a
+JSON array already shaped as Trystero's own `TurnServerConfig[]`. Free tier
+(~500MB-1GB/mo TURN relay, unlimited STUN) comfortably covers a text-based
+night-info app. `turnConfig` (not `rtcConfig`) is the right knob to use here:
+`peer.mjs` shows `turnConfig` gets concatenated onto Trystero's default STUN list,
+while `rtcConfig` is spread in afterward and would silently replace `iceServers`
+entirely — passing Metered's whole response (including its own redundant `stun:`
+entry) through `turnConfig` needs no filtering and matches Trystero's own README
+example verbatim.
+
+The app name/API key are supplied via `VITE_METERED_APP_NAME`/`VITE_METERED_API_KEY`
+(see `.env.example`) — this is the first env var usage anywhere in the repo, using
+Vite's standard `import.meta.env.VITE_*` mechanism (already type-checks with no
+extra work: `tsconfig.json` has `"types": ["vite/client"]`). Embedding this key
+client-side is an accepted tradeoff, not an oversight: this is a static app with no
+server to hide it behind either way, and the key is Metered's own client-facing one,
+not a secret in the traditional sense. `fetchTurnIceServers()` is isolated to its own
+tiny module (rather than folded into `config.ts`, which is just declarative
+constants) specifically so a future provider swap touches one file. It resolves to
+`undefined` on every failure path (missing env vars, network error, timeout,
+malformed response) rather than throwing, so `room.ts` never needs its own
+try/catch — it just conditionally omits `turnConfig`, reproducing the old
+STUN-only behavior. A 5s `AbortController` timeout bounds the worst case so a hung
+request can't leave the "Connecting…" placeholder (see below) stuck forever.
+**Production builds need the two secrets set in GitHub Actions**
+(`.github/workflows/deploy.yml`'s `build` job) — a local `.env` has zero effect on
+the deployed site, since Vite bakes `import.meta.env.VITE_*` in at build time.
+
+**Why `createHostRoom`/`joinPlayerRoom` are `async` now:** the ICE server list must
+be finalized before `joinRoom()` is called (it can't be swapped mid-negotiation), and
+fetching it is inherently async — so both factories now `await
+fetchTurnIceServers()` as their first line, before `joinRoom(...)`. Nothing else in
+either function changes; the rest of each (state restoration, `makeAction` calls,
+listener wiring) doesn't care how `room` was obtained. This is the first
+`async`/`await` anywhere in the codebase, which forced a small new pattern in
+`host-room/index.ts`/`join-room/index.ts`: `main.ts` still calls
+`renderHostRoom`/`renderJoinRoom` synchronously and never awaits them (no change
+there), so each render function now synchronously shows an immediate "Connecting…"
+placeholder, kicks off the async room creation, and moves its old body (unchanged)
+into a `buildHostRoomUi`/`buildJoinRoomUi` helper called once the promise resolves.
+This opens a real race: if the user clicks "Cancel" (or otherwise navigates away)
+while the TURN fetch is still in flight, `setState` fires and `render()` swaps in a
+different screen — the stale promise would, if unguarded, later resolve and
+overwrite that new screen with the room UI nobody asked for anymore, while also
+leaking an unclosed WebRTC session. Both `.then()` handlers guard against this by
+checking `getState().screen`/`getState().roomCode` still match before building the
+UI, calling `handle.leave()` and bailing out otherwise. Trystero's own
+`callbacks.onJoinError` (fires when peers exchange SDP but WebRTC still can't
+connect — "usually means TURN servers are needed or misconfigured") is wired up
+alongside this, as a `console.warn`, since it's the one diagnostic signal Trystero
+gives for exactly this failure class and was previously unused anywhere.
+
 ### The five Trystero actions (`src/trystero/config.ts`, `src/trystero/room.ts`)
 
 There used to be a sixth, `nightActionResponse` — a Player's structured answer to a

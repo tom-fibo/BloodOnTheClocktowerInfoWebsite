@@ -1,5 +1,6 @@
 import { joinRoom, selfId } from 'trystero'
 import { APP_ID, ACTIONS } from './config'
+import { fetchTurnIceServers } from './turn-config'
 import { DEFAULT_SCRIPT_ID } from '../data/scripts'
 import { getOrCreatePlayerToken } from '../utils/reconnect-token'
 import { loadHostState, saveHostState, clearHostState } from '../utils/host-persistence'
@@ -108,8 +109,21 @@ export interface PlayerRoomHandle {
   onNightCard(cb: (card: { elements: NightCardElement[]; ts: number }) => void): void
 }
 
-export function createHostRoom(roomCode: string): HostRoomHandle {
-  const room = joinRoom({ appId: APP_ID, password: roomCode }, roomCode)
+export async function createHostRoom(roomCode: string): Promise<HostRoomHandle> {
+  const turnConfig = await fetchTurnIceServers()
+  const room = joinRoom(
+    { appId: APP_ID, password: roomCode, ...(turnConfig ? { turnConfig } : {}) },
+    roomCode,
+    {
+      onJoinError: (details) => {
+        console.warn(
+          '[trystero] onJoinError — peers exchanged signaling but WebRTC could not connect ' +
+            '(this usually means TURN is needed or misconfigured):',
+          details,
+        )
+      },
+    },
+  )
 
   const hello = room.makeAction<HelloPayload>(ACTIONS.HELLO)
   const roster = room.makeAction<RosterPayload>(ACTIONS.ROSTER)
@@ -516,8 +530,21 @@ export function createHostRoom(roomCode: string): HostRoomHandle {
   }
 }
 
-export function joinPlayerRoom(roomCode: string, initialName: string): PlayerRoomHandle {
-  const room = joinRoom({ appId: APP_ID, password: roomCode }, roomCode)
+export async function joinPlayerRoom(roomCode: string, initialName: string): Promise<PlayerRoomHandle> {
+  const turnConfig = await fetchTurnIceServers()
+  const room = joinRoom(
+    { appId: APP_ID, password: roomCode, ...(turnConfig ? { turnConfig } : {}) },
+    roomCode,
+    {
+      onJoinError: (details) => {
+        console.warn(
+          '[trystero] onJoinError — peers exchanged signaling but WebRTC could not connect ' +
+            '(this usually means TURN is needed or misconfigured):',
+          details,
+        )
+      },
+    },
+  )
   const reconnectToken = getOrCreatePlayerToken(roomCode)
 
   const hello = room.makeAction<HelloPayload>(ACTIONS.HELLO)

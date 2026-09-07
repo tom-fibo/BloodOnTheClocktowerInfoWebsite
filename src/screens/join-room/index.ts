@@ -1,6 +1,7 @@
 import { el } from '../../ui/dom'
 import { getState, setState } from '../../state/store'
 import { joinPlayerRoom } from '../../trystero/room'
+import type { PlayerRoomHandle } from '../../trystero/room'
 import { renderTabs, type TabsHandle } from '../../ui/tabs'
 import { DEFAULT_SCRIPT_ID } from '../../data/scripts'
 import { saveLastSession, clearLastSession, saveLastName } from '../../utils/session'
@@ -19,9 +20,63 @@ const AUTO_RELOAD_DELAY_MS = 8000
 
 export function renderJoinRoom(container: HTMLElement): void {
   const { roomCode, selfName } = getState()
-  const handle = joinPlayerRoom(roomCode, selfName)
+
+  // joinPlayerRoom() now awaits a TURN-credential fetch (bounded to ~5s, see
+  // turn-config.ts) before it can call joinRoom() — this placeholder covers that
+  // gap. saveLastSession() still runs immediately: even a reload mid-connect
+  // should retry joining this room, not lose the destination.
+  container.replaceChildren(
+    el('div', { className: 'screen join-room-screen' }, [
+      el('div', { className: 'room-header' }, [
+        el('div', { className: 'room-header-title' }, [el('h1', { textContent: 'Player' })]),
+        el('button', {
+          className: 'leave-button',
+          textContent: 'Cancel',
+          onclick: () => {
+            clearLastSession()
+            setState({ screen: 'landing' })
+          },
+        }),
+      ]),
+      el('p', { textContent: 'Connecting…' }),
+    ]),
+  )
   saveLastSession({ screen: 'join-room', roomCode, selfName })
 
+  joinPlayerRoom(roomCode, selfName)
+    .then((handle) => {
+      // The user may have navigated away (e.g. clicked Cancel above) while the
+      // TURN fetch was in flight — this container no longer belongs to us, so
+      // tear the now-unwanted room down instead of clobbering whatever screen
+      // is actually showing.
+      if (getState().screen !== 'join-room' || getState().roomCode !== roomCode) {
+        handle.leave()
+        return
+      }
+      buildJoinRoomUi(container, handle, roomCode, selfName)
+    })
+    .catch((err) => {
+      console.error('[trystero] Failed to join room', err)
+      if (getState().screen !== 'join-room' || getState().roomCode !== roomCode) return
+      container.replaceChildren(
+        el('div', { className: 'screen join-room-screen' }, [
+          el('p', { textContent: 'Failed to connect. Please try again.' }),
+          el('button', {
+            className: 'secondary',
+            textContent: 'Back',
+            onclick: () => setState({ screen: 'landing' }),
+          }),
+        ]),
+      )
+    })
+}
+
+function buildJoinRoomUi(
+  container: HTMLElement,
+  handle: PlayerRoomHandle,
+  roomCode: string,
+  selfName: string,
+): void {
   // Shared, mutable, and kept alive for the whole room session (unlike the
   // per-tab panels, which are torn down and recreated on every tab switch) —
   // see trystero/room.ts's listener-Set comment for why a plain single-slot
